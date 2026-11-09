@@ -49,7 +49,8 @@ static int msm_btsco_ch = 1;
 
 static int msm_proxy_rx_ch = 2;
 static struct platform_device *spdev;
-static int ext_spk_amp_gpio = -1;
+static int ext_spk_amp_gpio_1 = -1;
+static int ext_spk_amp_gpio_2 = -1;
 
 /* pointers for digital codec register mappings */
 static void __iomem *pcbcr;
@@ -139,22 +140,31 @@ static const struct snd_soc_dapm_widget msm8x10_dapm_widgets[] = {
 	SND_SOC_DAPM_MIC("Headset Mic", NULL),
 	SND_SOC_DAPM_MIC("Secondary Mic", NULL),
 };
+
 static int msm8x10_ext_spk_power_amp_init(void)
 {
-	int ret = 0;
+    int ret = 0;
 
-	ext_spk_amp_gpio = of_get_named_gpio(spdev->dev.of_node,
-		"qcom,ext-spk-amp-gpio", 0);
-	if (ext_spk_amp_gpio >= 0) {
-		ret = gpio_request(ext_spk_amp_gpio, "ext_spk_amp_gpio");
-		if (ret) {
-			pr_err("%s: gpio_request failed for ext_spk_amp_gpio.\n",
-				__func__);
-			return -EINVAL;
-		}
-		gpio_direction_output(ext_spk_amp_gpio, 0);
-	}
-	return 0;
+    ext_spk_amp_gpio_1 = of_get_named_gpio(spdev->dev.of_node,
+            "qcom,ext-spk-amp-gpio-1", 0);
+    ext_spk_amp_gpio_2 = of_get_named_gpio(spdev->dev.of_node,
+            "qcom,ext-spk-amp-gpio-2", 0);
+    if ((ext_spk_amp_gpio_1 >= 0) && (ext_spk_amp_gpio_2 >= 0)){
+        ret = gpio_request(ext_spk_amp_gpio_1, "ext_spk_amp_gpio_1");
+        if (ret) {
+            pr_err("%s: gpio_request failed for ext_spk_amp_gpio_1.\n", __func__);
+            return -EINVAL;
+        }
+        gpio_direction_output(ext_spk_amp_gpio_1, 0);
+
+        ret = gpio_request(ext_spk_amp_gpio_2, "ext_spk_amp_gpio_2");
+        if (ret) {
+            pr_err("%s: gpio_request failed for ext_spk_amp_gpio_2.\n", __func__);
+            return -EINVAL;
+        }
+        gpio_direction_output(ext_spk_amp_gpio_2, 0);
+    }
+    return 0;
 }
 
 static int msm_ext_spkramp_event(struct snd_soc_dapm_widget *w,
@@ -162,7 +172,7 @@ static int msm_ext_spkramp_event(struct snd_soc_dapm_widget *w,
 {
 	pr_debug("%s()\n", __func__);
 
-	if (ext_spk_amp_gpio >= 0) {
+	if ((ext_spk_amp_gpio_1 >= 0) && (ext_spk_amp_gpio_2 >= 0)) {
 		if (SND_SOC_DAPM_EVENT_ON(event))
 			msm8x10_enable_ext_spk_power_amp(1);
 		else
@@ -175,12 +185,14 @@ static int msm_ext_spkramp_event(struct snd_soc_dapm_widget *w,
 static void msm8x10_enable_ext_spk_power_amp(u32 on)
 {
 	if (on) {
-		gpio_direction_output(ext_spk_amp_gpio, on);
+		gpio_direction_output(ext_spk_amp_gpio_1, on);
+		gpio_direction_output(ext_spk_amp_gpio_2, on);
 		/*time takes enable the external power amplifier*/
 		usleep_range(EXT_CLASS_D_EN_DELAY,
 			     EXT_CLASS_D_EN_DELAY + EXT_CLASS_D_DELAY_DELTA);
 	} else {
-		gpio_direction_output(ext_spk_amp_gpio, on);
+		gpio_direction_output(ext_spk_amp_gpio_1, on);
+		gpio_direction_output(ext_spk_amp_gpio_2, on);
 		/*time takes disable the external power amplifier*/
 		usleep_range(EXT_CLASS_D_DIS_DELAY,
 			     EXT_CLASS_D_DIS_DELAY + EXT_CLASS_D_DELAY_DELTA);
@@ -521,9 +533,13 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 		return ret;
 
 exit:
-	if (gpio_is_valid(ext_spk_amp_gpio))
-		gpio_free(ext_spk_amp_gpio);
-
+	/*there is no need to free gpio,fix the warning when boot*/
+	/*
+    if (gpio_is_valid(ext_spk_amp_gpio_1))
+        gpio_free(ext_spk_amp_gpio_1);
+    if (gpio_is_valid(ext_spk_amp_gpio_2))
+        gpio_free(ext_spk_amp_gpio_2);
+	*/
 	return ret;
 }
 
@@ -1019,7 +1035,8 @@ static __devinit int msm8x10_asoc_machine_probe(struct platform_device *pdev)
 	struct snd_soc_card *card = &snd_soc_card_msm8x10;
 	int ret;
 
-	dev_dbg(&pdev->dev, "%s\n", __func__);
+//	dev_dbg(&pdev->dev, "%s\n", __func__);
+    printk("enter %s.\n", __func__);
 	if (!pdev->dev.of_node) {
 		dev_err(&pdev->dev, "No platform supplied from device tree\n");
 		return -EINVAL;
@@ -1029,22 +1046,28 @@ static __devinit int msm8x10_asoc_machine_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, card);
 
 	ret = snd_soc_of_parse_card_name(card, "qcom,model");
-	if (ret)
+	if (ret) {
+		dev_err(&pdev->dev, "snd_soc_of_parse_card_name failed\n");
 		goto err;
+    }
 
 	ret = snd_soc_of_parse_audio_routing(card,
 			"qcom,audio-routing");
-	if (ret)
+	if (ret) {
+		dev_err(&pdev->dev, "snd_soc_of_parse_audio_routing failed\n");
 		goto err;
+    }
 
 	mutex_init(&cdc_mclk_mutex);
 	pcbcr = ioremap(MSM8X10_DINO_LPASS_DIGCODEC_CBCR, 4);
 	if (!pcbcr) {
+		dev_err(&pdev->dev, "pcbcr ioremap failed\n");
 		ret = -ENOMEM;
 		goto err1;
 	}
 	prcgr = ioremap(MSM8X10_DINO_LPASS_DIGCODEC_CMD_RCGR, 4);
 	if (!prcgr) {
+		dev_err(&pdev->dev, "prcgr ioremap failed\n");
 		ret = -ENOMEM;
 		goto err1;
 	}
@@ -1057,13 +1080,14 @@ static __devinit int msm8x10_asoc_machine_probe(struct platform_device *pdev)
 	spdev = pdev;
 
 	ret = snd_soc_register_card(card);
-	if (ret == -EPROBE_DEFER)
+	if (ret == -EPROBE_DEFER) {
+		dev_err(&pdev->dev, "snd_soc_register_card failed for EPROBE_DEFER\n");
 		goto err1;
-	else if (ret) {
-		dev_err(&pdev->dev, "snd_soc_register_card failed (%d)\n",
-			ret);
+    } else if (ret) {
+		dev_err(&pdev->dev, "snd_soc_register_card failed (%d)\n", ret);
 		goto err1;
 	}
+    printk("leave %s.\n", __func__);
 	return 0;
 err1:
 	mutex_destroy(&cdc_mclk_mutex);
@@ -1079,8 +1103,11 @@ static int __devexit msm8x10_asoc_machine_remove(struct platform_device *pdev)
 {
 	struct snd_soc_card *card = platform_get_drvdata(pdev);
 
-	if (gpio_is_valid(ext_spk_amp_gpio))
-		gpio_free(ext_spk_amp_gpio);
+    if (gpio_is_valid(ext_spk_amp_gpio_1))
+        gpio_free(ext_spk_amp_gpio_1);
+    if (gpio_is_valid(ext_spk_amp_gpio_2))
+        gpio_free(ext_spk_amp_gpio_2);
+
 	snd_soc_unregister_card(card);
 	mutex_destroy(&cdc_mclk_mutex);
 

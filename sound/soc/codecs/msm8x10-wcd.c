@@ -2980,6 +2980,10 @@ int msm8x10_wcd_hs_detect(struct snd_soc_codec *codec,
 	struct msm8x10_wcd_priv *wcd = snd_soc_codec_get_drvdata(codec);
 
 	wcd->mbhc_cfg = mbhc_cfg;
+
+	//save mbhc config
+	wcd->mbhc.mbhc_cfg = mbhc_cfg;
+	
 	schedule_delayed_work(&wcd->hs_detect_work,
 			msecs_to_jiffies(5000));
 	return 0;

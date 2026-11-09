@@ -810,7 +810,7 @@ static void wcd9xxx_report_plug(struct wcd9xxx_mbhc *mbhc, int insertion,
 			mbhc->micbias_enable = false;
 		}
 		mbhc->zl = mbhc->zr = 0;
-		pr_debug("%s: Reporting removal %d(%x)\n", __func__,
+		pr_info("%s: Reporting removal %d(%x)\n", __func__,
 			 jack_type, mbhc->hph_status);
 		wcd9xxx_jack_report(mbhc, &mbhc->headset_jack, mbhc->hph_status,
 				    WCD9XXX_JACK_MASK);
@@ -867,7 +867,7 @@ static void wcd9xxx_report_plug(struct wcd9xxx_mbhc *mbhc, int insertion,
 		if (mbhc->impedance_detect && impedance_detect_en)
 			wcd9xxx_detect_impedance(mbhc, &mbhc->zl, &mbhc->zr);
 
-		pr_debug("%s: Reporting insertion %d(%x)\n", __func__,
+		pr_info("%s: Reporting insertion %d(%x)\n", __func__,
 			 jack_type, mbhc->hph_status);
 		wcd9xxx_jack_report(mbhc, &mbhc->headset_jack,
 				    mbhc->hph_status, WCD9XXX_JACK_MASK);
@@ -2093,7 +2093,6 @@ static void wcd9xxx_mbhc_decide_swch_plug(struct wcd9xxx_mbhc *mbhc)
 		wcd9xxx_schedule_hs_detect_plug(mbhc,
 						&mbhc->correct_plug_swch);
 	} else if (plug_type == PLUG_TYPE_HEADPHONE) {
-		wcd9xxx_report_plug(mbhc, 1, SND_JACK_HEADPHONE);
 		wcd9xxx_cleanup_hs_polling(mbhc);
 		wcd9xxx_schedule_hs_detect_plug(mbhc,
 						&mbhc->correct_plug_swch);
@@ -2705,7 +2704,7 @@ static void wcd9xxx_correct_swch_plug(struct work_struct *work)
 	bool current_source_enable;
 	bool wrk_complete = true, highhph = false;
 
-	pr_debug("%s: enter\n", __func__);
+	pr_info("%s: enter\n", __func__);
 
 	mbhc = container_of(work, struct wcd9xxx_mbhc, correct_plug_swch);
 	codec = mbhc->codec;
@@ -2759,7 +2758,7 @@ static void wcd9xxx_correct_swch_plug(struct work_struct *work)
 			plug_type = wcd9xxx_codec_get_plug_type(mbhc, true);
 		WCD9XXX_BCL_UNLOCK(mbhc->resmgr);
 
-		pr_debug("%s: attempt(%d) current_plug(%d) new_plug(%d)\n",
+		pr_info("%s: attempt(%d) current_plug(%d) new_plug(%d)\n",
 			 __func__, retry, mbhc->current_plug, plug_type);
 
 		highhph_cnt = (plug_type == PLUG_TYPE_HIGH_HPH) ?
@@ -2859,7 +2858,7 @@ static void wcd9xxx_correct_swch_plug(struct work_struct *work)
 		}
 		WCD9XXX_BCL_UNLOCK(mbhc->resmgr);
 	}
-	pr_debug("%s: leave current_plug(%d)\n", __func__, mbhc->current_plug);
+	pr_info("%s: leave current_plug(%d)\n", __func__, mbhc->current_plug);
 	/* unlock sleep */
 	wcd9xxx_unlock_sleep(mbhc->resmgr->core_res);
 }
@@ -2929,6 +2928,14 @@ static void wcd9xxx_swch_irq_handler(struct wcd9xxx_mbhc *mbhc)
 				      0x00);
 			snd_soc_update_bits(codec, WCD9XXX_A_CDC_MBHC_B1_CTL,
 					    0x02, 0x00);
+			/*Disable internal micbias when plug out*/
+			if (mbhc->mbhc_cfg->use_int_rbias) {
+				if (mbhc->mbhc_cb && mbhc->mbhc_cb->setup_int_rbias)
+					mbhc->mbhc_cb->setup_int_rbias(codec, false);
+				else
+					pr_err("%s: internal bias requested but codec did not provide callback\n",
+							__func__);
+			}
 
 			/* Enable Mic Bias pull down and HPH Switch to GND */
 			snd_soc_update_bits(codec,
@@ -2962,7 +2969,7 @@ static irqreturn_t wcd9xxx_mech_plug_detect_irq(int irq, void *data)
 	int r = IRQ_HANDLED;
 	struct wcd9xxx_mbhc *mbhc = data;
 
-	pr_debug("%s: enter\n", __func__);
+	pr_info("%s: enter\n", __func__);
 	if (unlikely(wcd9xxx_lock_sleep(mbhc->resmgr->core_res) == false)) {
 		pr_warn("%s: failed to hold suspend\n", __func__);
 		r = IRQ_NONE;
@@ -2972,7 +2979,7 @@ static irqreturn_t wcd9xxx_mech_plug_detect_irq(int irq, void *data)
 		wcd9xxx_unlock_sleep(mbhc->resmgr->core_res);
 	}
 
-	pr_debug("%s: leave %d\n", __func__, r);
+	pr_info("%s: leave %d\n", __func__, r);
 	return r;
 }
 
@@ -2992,6 +2999,7 @@ static int wcd9xxx_is_false_press(struct wcd9xxx_mbhc *mbhc)
 	const unsigned long timeout =
 	    jiffies + msecs_to_jiffies(BTN_RELEASE_DEBOUNCE_TIME_MS);
 
+	pr_info("v_ins_hu %d,v_ins_h %d,v_b1_hu %d,v_b1_h %d\n",v_ins_hu,v_ins_h,v_b1_hu,v_b1_h);
 	while (time_before(jiffies, timeout)) {
 		/*
 		 * This function needs to run measurements just few times during
@@ -3322,8 +3330,14 @@ irqreturn_t wcd9xxx_dce_handler(int irq, void *data)
 			}
 		}
 	}
+	
+	
 
 	if (btn >= 0) {
+		//sometimes it report wrong as the voltage is not stable
+		//as we just report nothing but hook,we can force the event to hook key
+		//FIXME:if qcom has better resolution,we will apply that 
+		btn = 0;
 		if (mbhc->in_swch_irq_handler) {
 			pr_debug(
 			"%s: Switch irq triggered, ignore button press\n",
@@ -4188,10 +4202,25 @@ static int wcd9xxx_event_notify(struct notifier_block *self, unsigned long val,
 				void *data)
 {
 	int ret = 0;
-	struct wcd9xxx_mbhc *mbhc = ((struct wcd9xxx_resmgr *)data)->mbhc;
-	struct snd_soc_codec *codec = mbhc->codec;
+	struct wcd9xxx_mbhc *mbhc;
+	struct snd_soc_codec *codec;
 	enum wcd9xxx_notify_event event = (enum wcd9xxx_notify_event)val;
 
+	if(!data)
+	{
+		pr_err("%s: error: input data is NULL #######, event =%d\n", __func__, event);
+		ret = -EINVAL;
+		return ret;
+	}
+	
+	mbhc = ((struct wcd9xxx_resmgr *)data)->mbhc;
+	if(!mbhc)
+	{
+		pr_err("%s: error: mbhc is NULL ########, event =%d\n", __func__, event);
+		ret = -EINVAL;
+		return ret;
+	}
+	codec = mbhc->codec;
 	pr_debug("%s: enter event %s(%d)\n", __func__,
 		 wcd9xxx_get_event_string(event), event);
 
