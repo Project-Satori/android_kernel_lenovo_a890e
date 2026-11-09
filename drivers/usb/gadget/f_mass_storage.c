@@ -650,7 +650,10 @@ static int fsg_setup(struct usb_function *f,
 				w_length != 1)
 			return -EDOM;
 		VDBG(fsg, "get max LUN\n");
-		*(u8 *)req->buf = fsg->common->nluns - 1;
+        if(has_mtp)
+            *(u8 *)req->buf = 0;
+        else
+		    *(u8 *)req->buf = fsg->common->nluns - 1;
 
 		/* Respond with data/status */
 		req->length = min((u16)1, w_length);
@@ -2869,7 +2872,7 @@ static inline void fsg_common_put(struct fsg_common *common)
 {
 	kref_put(&common->ref, fsg_common_release);
 }
-
+static struct device* cdrom_dev=NULL;
 static struct fsg_common *fsg_common_init(struct fsg_common *common,
 					  struct usb_composite_dev *cdev,
 					  struct fsg_config *cfg)
@@ -2955,7 +2958,8 @@ static struct fsg_common *fsg_common_init(struct fsg_common *common,
 			put_device(&curlun->dev);
 			goto error_release;
 		}
-
+		if(curlun->cdrom == 1)
+			cdrom_dev = &curlun->dev;
 		rc = device_create_file(&curlun->dev, &dev_attr_ro);
 		if (rc)
 			goto error_luns;

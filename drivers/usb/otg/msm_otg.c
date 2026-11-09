@@ -10,7 +10,6 @@
  * GNU General Public License for more details.
  *
  */
-
 #include <linux/module.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
@@ -105,6 +104,8 @@ static struct regulator *hsusb_vdd;
 static struct regulator *vbus_otg;
 static struct regulator *mhl_usb_hs_switch;
 static struct power_supply *psy;
+static struct power_supply *ac_psy;
+static struct power_supply *psy_now = NULL;
 
 static bool aca_id_turned_on;
 static bool legacy_power_supply;
@@ -1320,8 +1321,9 @@ static int msm_otg_notify_chg_type(struct msm_otg *motg)
 		charger_type = POWER_SUPPLY_TYPE_USB_CDP;
 	else if (motg->chg_type == USB_DCP_CHARGER ||
 			motg->chg_type == USB_PROPRIETARY_CHARGER ||
-			motg->chg_type == USB_FLOATED_CHARGER)
+			motg->chg_type == USB_FLOATED_CHARGER){
 		charger_type = POWER_SUPPLY_TYPE_USB_DCP;
+    }
 	else if ((motg->chg_type == USB_ACA_DOCK_CHARGER ||
 		motg->chg_type == USB_ACA_A_CHARGER ||
 		motg->chg_type == USB_ACA_B_CHARGER ||
@@ -1330,45 +1332,61 @@ static int msm_otg_notify_chg_type(struct msm_otg *motg)
 	else
 		charger_type = POWER_SUPPLY_TYPE_UNKNOWN;
 
+    if(charger_type == POWER_SUPPLY_TYPE_USB_DCP)
+       	psy_now = ac_psy;
+    else
+        psy_now = psy;
+
 	if (!psy) {
 		pr_err("No USB power supply registered!\n");
 		return -EINVAL;
 	}
 
-	pr_debug("setting usb power supply type %d\n", charger_type);
-	power_supply_set_supply_type(psy, charger_type);
+	pr_info("%s,setting usb power supply type %d\n",__func__,charger_type);
+    power_supply_set_supply_type(psy, charger_type);
 	return 0;
 }
 
 static int msm_otg_notify_power_supply(struct msm_otg *motg, unsigned mA)
 {
+
 	if (!psy) {
 		dev_dbg(motg->phy.dev, "no usb power supply registered\n");
 		goto psy_error;
 	}
 
+	pr_debug("%s,cur_power %d,mA %d.\n",__func__,motg->cur_power,mA);
+
 	if (motg->cur_power == 0 && mA > 2) {
 		/* Enable charging */
-		if (power_supply_set_online(psy, true))
+		if (power_supply_set_online(psy_now, true))
 			goto psy_error;
 		if (power_supply_set_current_limit(psy, 1000*mA))
 			goto psy_error;
 	} else if (motg->cur_power > 0 && (mA == 0 || mA == 2)) {
 		/* Disable charging */
-		if (power_supply_set_online(psy, false))
+        if(motg->online){
+            psy_now = psy;
+		    if (power_supply_set_online(psy_now, false))
 			goto psy_error;
+        }
+        if(motg->ac_online){
+            psy_now = ac_psy;
+            if (power_supply_set_online(psy_now, false))
+                goto psy_error;
+        }
 		/* Set max current limit */
 		if (power_supply_set_current_limit(psy, 0))
 			goto psy_error;
 	} else {
-		if (power_supply_set_online(psy, true))
+		if (power_supply_set_online(psy_now, true))
 			goto psy_error;
 		/* Current has changed (100/2 --> 500) */
 		if (power_supply_set_current_limit(psy, 1000*mA))
 			goto psy_error;
 	}
 
-	power_supply_changed(psy);
+	power_supply_changed(psy_now);
 	return 0;
 
 psy_error:
@@ -1421,6 +1439,7 @@ static int msm_otg_set_power(struct usb_phy *phy, unsigned mA)
 	 * IDEV_CHG can be drawn irrespective of suspend/un-configured
 	 * states when CDP/ACA is connected.
 	 */
+
 	if (motg->chg_type == USB_SDP_CHARGER)
 		msm_otg_notify_charger(motg, mA);
 
@@ -2310,6 +2329,7 @@ static void msm_chg_detect_work(struct work_struct *w)
 	unsigned long delay;
 
 	dev_dbg(phy->dev, "chg detection work\n");
+	dev_dbg(phy->dev, "chg detection work chg_state %d.\n",motg->chg_state);
 
 	if (test_bit(MHL, &motg->inputs)) {
 		dev_dbg(phy->dev, "detected MHL, escape chg detection work\n");
@@ -2638,6 +2658,8 @@ static void msm_otg_sm_work(struct work_struct *w)
 						OTG_STATE_B_PERIPHERAL;
 					break;
 				case USB_SDP_CHARGER:
+					msm_otg_notify_charger(motg,
+							IDEV_ACA_CHG_LIMIT);
 					msm_otg_start_peripheral(otg, 1);
 					otg->phy->state =
 						OTG_STATE_B_PERIPHERAL;
@@ -3638,6 +3660,40 @@ static ssize_t msm_otg_bus_write(struct file *file, const char __user *ubuf,
 	return count;
 }
 
+static int otg_power_get_property_ac(struct power_supply *psy,
+				  enum power_supply_property psp,
+				  union power_supply_propval *val)
+{
+	struct msm_otg *motg = container_of(psy, struct msm_otg, ac_psy);
+
+	switch (psp) {
+	case POWER_SUPPLY_PROP_ONLINE:
+		val->intval = motg->ac_online;
+		break;
+    default:
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+static int otg_power_set_property_ac(struct power_supply *psy,
+				  enum power_supply_property psp,
+				  const union power_supply_propval *val)
+{
+	struct msm_otg *motg = container_of(psy, struct msm_otg, ac_psy);
+
+	switch (psp) {
+	case POWER_SUPPLY_PROP_ONLINE:
+		motg->ac_online = val->intval;
+		break;
+    default:
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
 static int otg_power_get_property_usb(struct power_supply *psy,
 				  enum power_supply_property psp,
 				  union power_supply_propval *val)
@@ -3658,6 +3714,8 @@ static int otg_power_get_property_usb(struct power_supply *psy,
 		break;
 	/* Reflect USB enumeration */
 	case POWER_SUPPLY_PROP_PRESENT:
+		val->intval = motg->vbus_state;
+        break;
 	case POWER_SUPPLY_PROP_ONLINE:
 		val->intval = motg->online;
 		break;
@@ -3683,6 +3741,7 @@ static int otg_power_set_property_usb(struct power_supply *psy,
 	/* Process PMIC notification in PRESENT prop */
 	case POWER_SUPPLY_PROP_PRESENT:
 		msm_otg_set_vbus_state(val->intval);
+        motg->vbus_state = val->intval;
 		break;
 	/* The ONLINE property reflects if usb has enumerated */
 	case POWER_SUPPLY_PROP_ONLINE:
@@ -3708,6 +3767,19 @@ static int otg_power_set_property_usb(struct power_supply *psy,
 	return 0;
 }
 
+static int otg_power_property_is_writeable_ac(struct power_supply *psy,
+						enum power_supply_property psp)
+{
+	switch (psp) {
+	case POWER_SUPPLY_PROP_ONLINE:
+		return 1;
+	default:
+		break;
+	}
+
+	return 0;
+}
+
 static int otg_power_property_is_writeable_usb(struct power_supply *psy,
 						enum power_supply_property psp)
 {
@@ -3729,6 +3801,9 @@ static char *otg_pm_power_supplied_to[] = {
 	"battery",
 };
 
+static enum power_supply_property otg_pm_power_props_ac[] = {
+	POWER_SUPPLY_PROP_ONLINE,
+};
 static enum power_supply_property otg_pm_power_props_usb[] = {
 	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_PRESENT,
@@ -3942,12 +4017,27 @@ static int msm_otg_setup_devices(struct platform_device *ofdev,
 	return retval;
 }
 
-static int msm_otg_register_power_supply(struct platform_device *pdev,
-					struct msm_otg *motg)
+static int msm_otg_register_usb_power_supply(struct platform_device *pdev,struct msm_otg *motg)
 {
 	int ret;
 
 	ret = power_supply_register(&pdev->dev, &motg->usb_psy);
+	if (ret < 0) {
+		dev_err(motg->phy.dev,
+			"%s:power_supply_register usb failed\n",
+			__func__);
+		return ret;
+	}
+
+	legacy_power_supply = false;
+	return 0;
+}
+
+static int msm_otg_register_ac_power_supply(struct platform_device *pdev,struct msm_otg *motg)
+{
+	int ret;
+
+	ret = power_supply_register(&pdev->dev, &motg->ac_psy);
 	if (ret < 0) {
 		dev_err(motg->phy.dev,
 			"%s:power_supply_register usb failed\n",
@@ -4151,7 +4241,7 @@ static ssize_t dpdm_pulldown_enable_store(struct device *dev,
 
 static DEVICE_ATTR(dpdm_pulldown_enable, S_IRUGO | S_IWUSR,
 		dpdm_pulldown_enable_show, dpdm_pulldown_enable_store);
-
+extern int is_testmode;
 struct msm_otg_platform_data *msm_otg_dt_to_pdata(struct platform_device *pdev)
 {
 	struct device_node *node = pdev->dev.of_node;
@@ -4213,8 +4303,9 @@ struct msm_otg_platform_data *msm_otg_dt_to_pdata(struct platform_device *pdev)
 				"qcom,hsusb-l1-supported");
 	pdata->enable_ahb2ahb_bypass = of_property_read_bool(node,
 				"qcom,ahb-async-bridge-bypass");
-	pdata->disable_retention_with_vdd_min = of_property_read_bool(node,
-				"qcom,disable-retention-with-vdd-min");
+	printk("testmode %d\n", is_testmode);
+	if(is_testmode)
+		pdata->enable_ahb2ahb_bypass = false;
 
 	return pdata;
 }
@@ -4624,14 +4715,28 @@ static int __init msm_otg_probe(struct platform_device *pdev)
 	motg->usb_psy.property_is_writeable
 		= otg_power_property_is_writeable_usb;
 
+	motg->ac_psy.name = "ac";
+	motg->ac_psy.type = POWER_SUPPLY_TYPE_MAINS;
+	motg->ac_psy.supplied_to = otg_pm_power_supplied_to;
+	motg->ac_psy.num_supplicants = ARRAY_SIZE(otg_pm_power_supplied_to);
+	motg->ac_psy.properties = otg_pm_power_props_ac;
+	motg->ac_psy.num_properties = ARRAY_SIZE(otg_pm_power_props_ac);
+	motg->ac_psy.get_property = otg_power_get_property_ac;
+	motg->ac_psy.set_property = otg_power_set_property_ac;
+	motg->ac_psy.property_is_writeable
+		= otg_power_property_is_writeable_ac;
+
 	if (!pm8921_charger_register_vbus_sn(NULL)) {
 		/* if pm8921 use legacy implementation */
 		dev_dbg(motg->phy.dev, "%s: legacy support\n", __func__);
 		legacy_power_supply = true;
 	} else {
 		/* otherwise register our own power supply */
-		if (!msm_otg_register_power_supply(pdev, motg))
+		if (!msm_otg_register_usb_power_supply(pdev, motg))
 			psy = &motg->usb_psy;
+		if(!msm_otg_register_ac_power_supply(pdev, motg))
+            ac_psy = &motg->ac_psy;
+        
 	}
 
 	if (legacy_power_supply && pdata->otg_control == OTG_PMIC_CONTROL)

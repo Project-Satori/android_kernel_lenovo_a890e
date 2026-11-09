@@ -35,6 +35,7 @@
 
 #include "gadget_chips.h"
 
+static bool has_mtp = false;
 /*
  * Kbuild is not very cooperative with respect to linking separately
  * compiled library objects into one module.  So for now we won't use
@@ -314,6 +315,33 @@ static void android_pm_qos_update_latency(struct android_dev *dev, int vote)
 	last_vote = vote;
 }
 
+struct android_dev *_android_dev;
+void popup_usb_select_window(int popup){
+	struct android_dev *dev = _android_dev;
+	char *appear[2]    = { "USB_STATE=AVAILABLE", NULL };
+	char *disappear[2]   = { "USB_STATE=UNAVAILABLE", NULL };
+	char **uevent_envp = NULL;
+	static int old_state = 0;
+
+	printk("old state is %d new state is %d in %s\n",old_state,popup,__func__);
+	if((old_state == popup) || (popup == 0))
+		return;
+	else
+		old_state = popup;
+	
+	if(popup == 1)
+		uevent_envp = appear;
+	else if(popup == 2)
+		uevent_envp = disappear;
+	if(uevent_envp){
+		kobject_uevent_env(&dev->dev->kobj, KOBJ_CHANGE, uevent_envp);
+		pr_info("%s: sent uevent %s\n", __func__, uevent_envp[0]);
+	}
+}
+
+
+extern int is_charger_plug_in(void);
+char* cdrom_path = "/system/etc/cdrom_install.iso";
 static void android_work(struct work_struct *data)
 {
 	struct android_dev *dev = container_of(data, struct android_dev, work);
@@ -327,6 +355,7 @@ static void android_work(struct work_struct *data)
 	static enum android_device_state last_uevent, next_state;
 	unsigned long flags;
 	int pm_qos_vote = -1;
+	int popup = 0;
 
 	spin_lock_irqsave(&cdev->lock, flags);
 	if (dev->suspended != dev->sw_suspended && cdev->config) {
@@ -347,10 +376,17 @@ static void android_work(struct work_struct *data)
 	}
 	dev->sw_connected = dev->connected;
 	dev->sw_suspended = dev->suspended;
+	//add by wz for usb select window
+	if (cdev->config){
+		popup = 1;
+	}
 	spin_unlock_irqrestore(&cdev->lock, flags);
 
+	if(is_charger_plug_in() == 0)
+		popup=2;
 	if (pm_qos_vote != -1)
 		android_pm_qos_update_latency(dev, pm_qos_vote);
+	popup_usb_select_window(popup);
 
 	if (uevent_envp) {
 		/*
@@ -381,6 +417,10 @@ static void android_work(struct work_struct *data)
 					   uevent_envp);
 			last_uevent = next_state;
 		}
+		if(uevent_envp == configured)
+			fsg_store_file(cdrom_dev,NULL,cdrom_path,strlen(cdrom_path));
+		if(uevent_envp == disconnected)
+			fsg_store_file(cdrom_dev,NULL,NULL,0);
 		pr_info("%s: sent uevent %s\n", __func__, uevent_envp[0]);
 	} else {
 		pr_info("%s: did not send uevent (%d %d %p)\n", __func__,
@@ -1397,10 +1437,27 @@ ptp_function_bind_config(struct android_usb_function *f,
 	return mtp_bind_config(c, true);
 }
 
+struct android_configuration *_android_conf = NULL;
 static int mtp_function_ctrlrequest(struct android_usb_function *f,
 					struct usb_composite_dev *cdev,
 					const struct usb_ctrlrequest *c)
 {
+#ifdef LENOVO_MS_OS_DESCRIPTOR
+	struct android_usb_function_holder *f_count;
+	struct android_configuration *conf = _android_conf;
+	int	   functions_no=0;
+	char   usb_function_string[32];
+	char  *buff = usb_function_string;
+
+	list_for_each_entry(f_count, &conf->enabled_functions, enabled_list)
+	{
+		functions_no++;
+		buff += sprintf(buff, "%s,", f_count->f->name);
+	}
+	*(buff-1) = '\n';
+
+	mtp_read_usb_functions(functions_no, usb_function_string);
+#endif
 	return mtp_ctrlrequest(cdev, c);
 }
 
@@ -1765,36 +1822,32 @@ struct mass_storage_function_config {
 static int mass_storage_function_init(struct android_usb_function *f,
 					struct usb_composite_dev *cdev)
 {
-	struct android_dev *dev = cdev_to_android_dev(cdev);
+	//struct android_dev *dev = cdev_to_android_dev(cdev);
 	struct mass_storage_function_config *config;
 	struct fsg_common *common;
-	int err;
-	int i;
-	const char *name[3];
+	int err , i ,j;
+	char lun_name[10];
 
 	config = kzalloc(sizeof(struct mass_storage_function_config),
 								GFP_KERNEL);
 	if (!config)
 		return -ENOMEM;
 
-	config->fsg.nluns = 1;
-	name[0] = "lun";
-	if (dev->pdata && dev->pdata->cdrom) {
-		config->fsg.luns[config->fsg.nluns].cdrom = 1;
-		config->fsg.luns[config->fsg.nluns].ro = 1;
-		config->fsg.luns[config->fsg.nluns].removable = 0;
-		name[config->fsg.nluns] = "lun0";
-		config->fsg.nluns++;
+	config->fsg.nluns = 2;
+	for (i = 0; i < config->fsg.nluns;i++){
+		config->fsg.luns[i].removable = 1;
+		config->fsg.luns[i].nofua = 1; 
+		/*
+		 *lun 0 - cdrom
+		 *lun 1 - external storage
+		 */
+		if(i == 0) {
+			config->fsg.luns[i].cdrom = 1;
+			config->fsg.luns[i].ro = 1;
+		}
+		else
+			config->fsg.luns[i].cdrom = 0;
 	}
-	if (dev->pdata && dev->pdata->internal_ums) {
-		config->fsg.luns[config->fsg.nluns].cdrom = 0;
-		config->fsg.luns[config->fsg.nluns].ro = 0;
-		config->fsg.luns[config->fsg.nluns].removable = 1;
-		name[config->fsg.nluns] = "lun1";
-		config->fsg.nluns++;
-	}
-
-	config->fsg.luns[0].removable = 1;
 
 	common = fsg_common_init(NULL, cdev, &config->fsg);
 	if (IS_ERR(common)) {
@@ -1802,24 +1855,22 @@ static int mass_storage_function_init(struct android_usb_function *f,
 		return PTR_ERR(common);
 	}
 
-	for (i = 0; i < config->fsg.nluns; i++) {
-		err = sysfs_create_link(&f->dev->kobj,
-					&common->luns[i].dev.kobj,
-					name[i]);
-		if (err)
-			goto error;
+	for(i = 0 ; i < config->fsg.nluns;i++){
+		snprintf(lun_name ,sizeof(lun_name),"lun%d",i);
+		err = sysfs_create_link(&f->dev->kobj,&common->luns[i].dev.kobj,lun_name);
+		if(err){
+			for(j = 0; j < i;j++){
+				snprintf(lun_name ,sizeof(lun_name),"lun%d",j);
+				sysfs_delete_link(&f->dev->kobj,&common->luns[j].dev.kobj,lun_name);
+			}
+			fsg_common_release(&common->ref);
+			kfree(config);
+			return err;
+		}
 	}
-
 	config->common = common;
 	f->config = config;
 	return 0;
-error:
-	for (; i > 0 ; i--)
-		sysfs_remove_link(&f->dev->kobj, name[i-1]);
-
-	fsg_common_release(&common->ref);
-	kfree(config);
-	return err;
 }
 
 static void mass_storage_function_cleanup(struct android_usb_function *f)
@@ -2360,6 +2411,7 @@ functions_store(struct device *pdev, struct device_attribute *attr,
 				conf = alloc_android_config(dev);
 
 			curr_conf = curr_conf->next;
+			_android_conf = conf;
 		}
 
 		while (conf_str) {
@@ -2610,6 +2662,7 @@ static void android_unbind_config(struct usb_configuration *c)
 	android_unbind_enabled_functions(dev, c);
 }
 
+int is_testmode = 0;
 static int android_bind(struct usb_composite_dev *cdev)
 {
 	struct android_dev *dev;
@@ -2661,6 +2714,8 @@ static int android_bind(struct usb_composite_dev *cdev)
 		return id;
 	strings_dev[STRING_SERIAL_IDX].id = id;
 	device_desc.iSerialNumber = id;
+	if(is_testmode == 1)
+		device_desc.iSerialNumber = 0;
 
 	if (gadget_is_otg(cdev->gadget))
 		list_for_each_entry(conf, &dev->configs, list_item)
@@ -2990,7 +3045,7 @@ static int __devinit android_probe(struct platform_device *pdev)
 		ret = -ENOMEM;
 		goto err_alloc;
 	}
-
+	_android_dev = android_dev;
 	android_dev->name = pdev->name;
 	android_dev->disable_depth = 1;
 	android_dev->functions = supported_functions;
@@ -3144,3 +3199,9 @@ static void __exit cleanup(void)
 	platform_driver_unregister(&android_platform_driver);
 }
 module_exit(cleanup);
+static int __init early_testmode(char *p)
+{
+	is_testmode = simple_strtoul(p,NULL,0);
+	return 0;
+}
+early_param("testmode",early_testmode);
