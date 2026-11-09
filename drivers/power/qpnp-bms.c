@@ -9,7 +9,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
-
 #define pr_fmt(fmt)	"BMS: %s: " fmt, __func__
 
 #include <linux/module.h>
@@ -287,6 +286,7 @@ struct qpnp_bms_chip {
 	struct qpnp_adc_tm_chip		*adc_tm_dev;
 };
 
+struct qpnp_bms_chip* bms_chip_g = NULL;
 static struct of_device_id qpnp_bms_match_table[] = {
 	{ .compatible = QPNP_BMS_DEV_NAME },
 	{}
@@ -403,6 +403,14 @@ static void disable_bms_irq(struct bms_irq *irq)
 {
 	if (!__test_and_set_bit(0, &irq->disabled)) {
 		disable_irq(irq->irq);
+		pr_debug("disabled irq %d\n", irq->irq);
+	}
+}
+
+static void disable_bms_irq_nosync(struct bms_irq *irq)
+{
+	if (!__test_and_set_bit(0, &irq->disabled)) {
+		disable_irq_nosync(irq->irq);
 		pr_debug("disabled irq %d\n", irq->irq);
 	}
 }
@@ -621,6 +629,39 @@ static int get_battery_voltage(struct qpnp_bms_chip *chip, int *result_uv)
 						adc_result.measurement);
 	*result_uv = (int)adc_result.physical;
 	return 0;
+}
+
+static int get_battery_temp(struct qpnp_bms_chip *chip)
+{
+	union power_supply_propval ret = {0,};
+
+	if (chip->batt_psy == NULL)
+		chip->batt_psy = power_supply_get_by_name("battery");
+	if (chip->batt_psy) {
+		/* if battery has been registered, use the status property */
+		chip->batt_psy->get_property(chip->batt_psy,
+					POWER_SUPPLY_PROP_TEMP, &ret);
+		return ret.intval;
+	}
+
+	/* Default to false if the battery power supply is not registered. */
+	pr_debug("battery power supply is not registered\n");
+	return 0;
+}
+
+static int get_battery_voltage_now(struct qpnp_bms_chip *chip)
+{
+	union power_supply_propval ret = {0,};
+
+	if (chip->batt_psy == NULL)
+		chip->batt_psy = power_supply_get_by_name("battery");
+	if (chip->batt_psy) {
+		/* if battery has been registered, use the status property */
+		chip->batt_psy->get_property(chip->batt_psy,
+					POWER_SUPPLY_PROP_VOLTAGE_NOW, &ret);
+		return ret.intval;
+	}
+    return 0;
 }
 
 #define CC_36_BIT_MASK 0xFFFFFFFFFLL
@@ -1674,6 +1715,16 @@ static struct kernel_param_ops bms_reset_ops = {
 module_param_cb(bms_reset, &bms_reset_ops, &bms_reset, 0644);
 
 #define SOC_STORAGE_MASK	0xFE
+void bms_store_invalid_soc(void)
+{
+	if(bms_chip_g == NULL){
+		printk("bms_chip_g is NULL.\n");
+		return;
+	}
+
+	qpnp_masked_write_base(bms_chip_g, bms_chip_g->soc_storage_addr,
+				SOC_STORAGE_MASK, SOC_STORAGE_MASK);
+}
 static void backup_soc_and_iavg(struct qpnp_bms_chip *chip, int batt_temp,
 				int soc)
 {
@@ -2349,7 +2400,7 @@ static int calculate_state_of_charge(struct qpnp_bms_chip *chip,
 
 	calculate_soc_params(chip, raw, &params, batt_temp);
 	if (!is_battery_present(chip)) {
-		pr_debug("battery gone, reporting 100\n");
+		pr_info("battery gone, reporting 100\n");
 		new_calculated_soc = 100;
 		goto done_calculating;
 	}
@@ -2374,7 +2425,7 @@ static int calculate_state_of_charge(struct qpnp_bms_chip *chip,
 		 * to adjust pon ocv since it is a small percent away from
 		 * the real soc
 		 */
-		pr_debug("soc = %d before forcing shutdown_soc = %d\n",
+		pr_info("soc = %d before forcing shutdown_soc = %d\n",
 							soc, shutdown_soc);
 		chip->last_ocv_uv = find_ocv_for_pc(chip, batt_temp,
 				find_pc_for_soc(chip, &params, shutdown_soc));
@@ -2389,7 +2440,7 @@ static int calculate_state_of_charge(struct qpnp_bms_chip *chip,
 					(params.fcc_uah
 						- params.uuc_uah));
 
-		pr_debug("DONE for shutdown_soc = %d soc is %d, adjusted ocv to %duV\n",
+		pr_info("DONE for shutdown_soc = %d soc is %d, adjusted ocv to %duV\n",
 				shutdown_soc, soc, chip->last_ocv_uv);
 	}
 	mutex_unlock(&chip->soc_invalidation_mutex);
@@ -2441,6 +2492,7 @@ done_calculating:
 	if (new_calculated_soc != previous_soc && chip->bms_psy_registered) {
 		power_supply_changed(&chip->bms_psy);
 		pr_debug("power supply changed\n");
+        pr_info("CC based SOC is %d",chip->calculated_soc);
 	} else {
 		/*
 		 * Call report state of charge anyways to periodically update
@@ -2596,10 +2648,21 @@ static void calculate_soc_work(struct work_struct *work)
 				struct qpnp_bms_chip,
 				calculate_soc_delayed_work.work);
 
-	recalculate_soc(chip);
-	schedule_delayed_work(&chip->calculate_soc_delayed_work,
-		round_jiffies_relative(msecs_to_jiffies
-		(get_calculation_delay_ms(chip))));
+	int soc = recalculate_soc(chip);
+	int battery_voltage = get_battery_voltage_now(chip)/1000;
+	int batt_temp = get_battery_temp(chip);
+
+	if (soc < chip->low_soc_calc_threshold
+			|| wake_lock_active(&chip->low_voltage_wake_lock))
+		schedule_delayed_work(&chip->calculate_soc_delayed_work,
+			round_jiffies_relative(msecs_to_jiffies
+			(chip->low_soc_calculate_soc_ms)));
+	else
+		schedule_delayed_work(&chip->calculate_soc_delayed_work,
+			round_jiffies_relative(msecs_to_jiffies
+			(chip->calculate_soc_ms)));
+
+	printk("Battery capacity is %d,voltage is %d,temperature is %d,status is %d,current is %d,charger counter is %d\n",soc,battery_voltage,batt_temp,get_battery_status(chip),get_prop_bms_current_now(chip),get_prop_bms_charge_counter(chip));
 }
 
 static void configure_vbat_monitor_low(struct qpnp_bms_chip *chip)
@@ -3460,7 +3523,8 @@ static int read_shutdown_soc(struct qpnp_bms_chip *chip)
 	else
 		shutdown_soc = SOC_INVALID;
 
-	pr_debug("stored soc = 0x%02x, shutdown_soc = %d\n",
+	/*pr_debug("stored soc = 0x%02x, shutdown_soc = %d\n",*/
+	printk("stored soc = 0x%02x, shutdown_soc = %d\n",
 			stored_soc, shutdown_soc);
 	return shutdown_soc;
 }
@@ -3494,6 +3558,7 @@ static void load_shutdown_data(struct qpnp_bms_chip *chip)
 	 */
 	shutdown_soc = read_shutdown_soc(chip);
 	invalid_stored_soc = (shutdown_soc == SOC_INVALID);
+	printk("%s shutdown_soc %d,invalid_stored_soc %d.\n",__func__,shutdown_soc,invalid_stored_soc);
 
 	/*
 	 * Do a quick run of SoC calculation to find whether the shutdown soc
@@ -3550,7 +3615,7 @@ static irqreturn_t bms_sw_cc_thr_irq_handler(int irq, void *_chip)
 	struct qpnp_bms_chip *chip = _chip;
 
 	pr_debug("sw_cc_thr irq triggered\n");
-	disable_bms_irq(&chip->sw_cc_thr_irq);
+	disable_bms_irq_nosync(&chip->sw_cc_thr_irq);
 	bms_stay_awake(&chip->soc_wake_source);
 	schedule_work(&chip->recalc_work);
 	return IRQ_HANDLED;
@@ -3588,6 +3653,8 @@ static int set_battery_data(struct qpnp_bms_chip *chip)
 		batt_data = &QRD_4v35_2000mAh_data;
 	} else if (chip->batt_type == BATT_QRD_4V2_1300MAH) {
 		batt_data = &qrd_4v2_1300mah_data;
+	} else if (chip->batt_type == BATT_QRD_4V35_2500MAH) {
+		batt_data = &QRD_4v35_2500mAh_data;
 	} else {
 		battery_id = read_battery_id(chip);
 		if (battery_id < 0) {
@@ -4311,6 +4378,7 @@ static int __devinit qpnp_bms_probe(struct spmi_device *spmi)
 		pr_err("error requesting bms irqs, rc = %d\n", rc);
 		goto unregister_dc;
 	}
+	bms_chip_g = chip;
 
 	pr_info("probe success: soc =%d vbatt = %d ocv = %d r_sense_uohm = %u warm_reset = %d\n",
 			get_prop_bms_capacity(chip), vbatt, chip->last_ocv_uv,

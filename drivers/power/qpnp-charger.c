@@ -360,6 +360,8 @@ struct qpnp_chg_chip {
 	struct delayed_work		usbin_health_check;
 	struct work_struct		soc_check_work;
 	struct delayed_work		aicl_check_work;
+	struct delayed_work		temp_mon_work;
+	struct wake_lock		temp_mon_wake_lock;
 	struct work_struct		insertion_ocv_work;
 	struct qpnp_chg_regulator	otg_vreg;
 	struct qpnp_chg_regulator	boost_vreg;
@@ -620,6 +622,7 @@ qpnp_chg_is_batfet_closed(struct qpnp_chg_chip *chip)
 }
 
 #define USB_VALID_BIT	BIT(7)
+struct qpnp_chg_chip	*tmp_chip;
 static int
 qpnp_chg_is_usb_chg_plugged_in(struct qpnp_chg_chip *chip)
 {
@@ -653,6 +656,11 @@ qpnp_chg_is_ibat_loop_active(struct qpnp_chg_chip *chip)
 	}
 
 	return !!(buck_sts & IBAT_LOOP_IRQ);
+}
+
+int is_charger_plug_in(void)
+{
+	return qpnp_chg_is_usb_chg_plugged_in(tmp_chip);
 }
 
 #define USB_VALID_MASK 0xC0
@@ -1004,6 +1012,8 @@ qpnp_chg_charge_en(struct qpnp_chg_chip *chip, int enable)
 		pr_debug("Battery not present, skipping\n");
 		return 0;
 	}
+	if (!qpnp_chg_is_batt_present(chip))
+		enable = 0;
 	pr_debug("charging %s\n", enable ? "enabled" : "disabled");
 	return qpnp_chg_masked_write(chip, chip->chgr_base + CHGR_CHG_CTRL,
 			CHGR_CHG_EN,
@@ -1017,9 +1027,10 @@ qpnp_chg_force_run_on_batt(struct qpnp_chg_chip *chip, int disable)
 	if (chip->use_default_batt_values)
 		return 0;
 	/* Don't force on battery if battery is not present */
-	if (!qpnp_chg_is_batt_present(chip))
-		return 0;
-
+	if (!qpnp_chg_is_batt_present(chip)){
+		disable = 1;
+	    pr_debug("%s batt is not present.\n",__func__);
+    }
 	/* This bit forces the charger to run off of the battery rather
 	 * than a connected charger */
 	return qpnp_chg_masked_write(chip, chip->chgr_base + CHGR_CHG_CTRL,
@@ -1156,7 +1167,7 @@ qpnp_chg_vbatdet_lo_irq_handler(int irq, void *_chip)
 	u8 chg_sts = 0;
 	int rc;
 
-	pr_debug("vbatdet-lo triggered\n");
+	printk("vbatdet-lo triggered\n");
 
 	rc = qpnp_chg_read(chip, &chg_sts, INT_RT_STS(chip->chgr_base), 1);
 	if (rc)
@@ -1184,6 +1195,7 @@ qpnp_chg_vbatdet_lo_irq_handler(int irq, void *_chip)
 }
 
 #define ARB_STOP_WORK_MS	1000
+#define CHG_GONE_TIME_OUT_MS   3000
 static irqreturn_t
 qpnp_chg_usb_chg_gone_irq_handler(int irq, void *_chip)
 {
@@ -1197,6 +1209,9 @@ qpnp_chg_usb_chg_gone_irq_handler(int irq, void *_chip)
 		pr_err("failed to read usb_chgpth_sts rc=%d\n", rc);
 
 	pr_debug("chg_gone triggered\n");
+	printk("chg_gone triggered, release and rerequest a 3s timeout the temerpature monitor wake lock \n");
+	wake_unlock(&chip->temp_mon_wake_lock);
+	wake_lock_timeout(&chip->temp_mon_wake_lock,msecs_to_jiffies(CHG_GONE_TIME_OUT_MS));
 	if (qpnp_chg_is_usb_chg_plugged_in(chip) && (usb_sts & CHG_GONE_IRQ)) {
 		qpnp_chg_charge_en(chip, 0);
 		qpnp_chg_force_run_on_batt(chip, 1);
@@ -1506,14 +1521,19 @@ qpnp_chg_bat_if_batt_temp_irq_handler(int irq, void *_chip)
 	struct qpnp_chg_chip *chip = _chip;
 	int batt_temp_good;
 
+	__cancel_delayed_work(&chip->temp_mon_work);
+	schedule_delayed_work(&chip->temp_mon_work,0);
+
 	batt_temp_good = qpnp_chg_is_batt_temp_ok(chip);
 	pr_debug("batt-temp triggered: %d\n", batt_temp_good);
+	printk("batt-temp triggered: %d\n", batt_temp_good);
 
 	pr_debug("psy changed batt_psy\n");
 	power_supply_changed(&chip->batt_psy);
 	return IRQ_HANDLED;
 }
 
+extern void bms_store_invalid_soc(void);
 static irqreturn_t
 qpnp_chg_bat_if_batt_pres_irq_handler(int irq, void *_chip)
 {
@@ -1522,6 +1542,7 @@ qpnp_chg_bat_if_batt_pres_irq_handler(int irq, void *_chip)
 
 	batt_present = qpnp_chg_is_batt_present(chip);
 	pr_debug("batt-pres triggered: %d\n", batt_present);
+	printk("batt-pres triggered: %d\n", batt_present);
 
 	if (chip->batt_present ^ batt_present) {
 		if (batt_present) {
@@ -1529,6 +1550,8 @@ qpnp_chg_bat_if_batt_pres_irq_handler(int irq, void *_chip)
 		} else {
 			chip->insertion_ocv_uv = 0;
 			qpnp_chg_charge_en(chip, 0);
+			qpnp_chg_force_run_on_batt(chip, 1);
+			bms_store_invalid_soc();
 		}
 		chip->batt_present = batt_present;
 		pr_debug("psy changed batt_psy\n");
@@ -1643,6 +1666,11 @@ qpnp_chg_chgr_chg_fastchg_irq_handler(int irq, void *_chip)
 		pr_err("failed to read interrupt sts %d\n", rc);
 
 	pr_debug("FAST_CHG IRQ triggered\n");
+	printk("FAST_CHG IRQ triggered,request wake lock for temperature monitor\n");
+	wake_lock(&chip->temp_mon_wake_lock);
+	__cancel_delayed_work(&chip->temp_mon_work);
+	schedule_delayed_work(&chip->temp_mon_work,0);
+
 	chip->chg_done = false;
 	if (chip->bat_if_base) {
 		pr_debug("psy changed batt_psy\n");
@@ -1979,7 +2007,7 @@ get_prop_batt_status(struct qpnp_chg_chip *chip)
 		qpnp_chg_is_dc_chg_plugged_in(chip)) && chip->chg_done) {
 		return POWER_SUPPLY_STATUS_FULL;
 	}
-
+	
 	rc = qpnp_chg_read(chip, &chgr_sts, INT_RT_STS(chip->chgr_base), 1);
 	if (rc) {
 		pr_err("failed to read interrupt sts %d\n", rc);
@@ -2085,6 +2113,11 @@ get_prop_capacity(struct qpnp_chg_chip *chip)
 			if (!qpnp_chg_is_usb_chg_plugged_in(chip)
 				&& !qpnp_chg_is_usb_chg_plugged_in(chip))
 				pr_warn_ratelimited("Battery 0, CHG absent\n");
+		}
+		if ((qpnp_chg_is_usb_chg_plugged_in(chip) ||
+			qpnp_chg_is_dc_chg_plugged_in(chip)) && (chip->chg_done)) {
+				printk("charging done, but capacity %d is not 100\n",soc);
+				return 100;
 		}
 		return soc;
 	} else {
@@ -2391,6 +2424,7 @@ qpnp_chg_ibatmax_set(struct qpnp_chg_chip *chip, int chg_current)
 		return -EINVAL;
 	}
 	temp = chg_current / QPNP_CHG_I_STEP_MA;
+
 	return qpnp_chg_masked_write(chip, chip->chgr_base + CHGR_IBAT_MAX,
 			QPNP_CHG_I_MASK, temp, 1);
 }
@@ -2525,6 +2559,7 @@ qpnp_chg_input_current_settled(struct qpnp_chg_chip *chip)
 	int rc, ibat_max_ma;
 	u8 reg, chgr_sts, ibat_trim, i;
 
+	printk("%s debug.\n",__func__);
 	chip->aicl_settled = true;
 
 	/*
@@ -2677,6 +2712,7 @@ qpnp_chg_set_appropriate_battery_current(struct qpnp_chg_chip *chip)
 			chip->thermal_mitigation[chip->therm_lvl_sel]);
 
 	pr_debug("setting %d mA\n", chg_current);
+	printk("wyh setting %d mA\n", chg_current);
 	qpnp_chg_ibatmax_set(chip, chg_current);
 }
 
@@ -3027,6 +3063,114 @@ qpnp_chg_adjust_vddmax(struct qpnp_chg_chip *chip, int vbat_mv)
 	qpnp_chg_set_appropriate_vddmax(chip);
 }
 
+static bool charging_software_stoped = false;
+static bool bat_cool = false;
+static bool bat_warm = false;
+static bool use_hw_stop_chg = true;
+static void
+qpnp_temp_mon_work(struct work_struct *work)
+{
+	struct delayed_work *dwork = to_delayed_work(work);
+	struct qpnp_chg_chip *chip = container_of(dwork,
+				struct qpnp_chg_chip, temp_mon_work);
+	int temp = 0;
+	int rc = 0;
+	int delay_ms = 0;
+	int current_now = 0;
+	int batt_voltage = 0;
+
+	current_now = get_prop_current_now(chip);
+	batt_voltage = get_prop_battery_voltage_now(chip) / 1000;
+	temp = get_prop_batt_temp(chip);
+
+	if(temp > 0 && temp  < chip->cool_bat_decidegc){
+		bat_cool = true;
+		bat_warm = false;
+	}else if(temp > chip->cool_bat_decidegc && temp < chip->warm_bat_decidegc){
+		bat_cool = false;
+		bat_warm = false;
+	}else if(temp > chip->warm_bat_decidegc && temp < 500){
+		bat_warm = true;
+		bat_cool = false;
+	}
+	
+	if(temp < 420 && temp > 50)
+	{
+	//when temp below the hot temperatuer, start hw feature to stop charging
+		if(use_hw_stop_chg == false)
+		{
+			rc = qpnp_chg_masked_write(chip,
+				chip->bat_if_base + BAT_IF_BTC_CTRL,
+				0x3,
+				1, 1);
+			if (rc) {
+				pr_debug("failed to chose BTC rc=%d\n", rc);
+				return ;
+			}
+			use_hw_stop_chg = true;
+		}
+	}else{
+	//when the pmic stop the charging automatically we close this feature and start software check.
+		if(use_hw_stop_chg == true)
+		{
+			rc = qpnp_chg_masked_write(chip,
+				chip->bat_if_base + BAT_IF_BTC_CTRL,
+				0x3,
+				2, 1);
+			if (rc) {
+				pr_debug("failed to chose BTC rc=%d\n", rc);
+				return ;
+			}
+			use_hw_stop_chg = false;
+		}
+	}
+	
+	if((temp < -10 || temp > 510) && (false == charging_software_stoped)){
+	    /*temperatrue toot high ro too low,software sotp charging for sure*/
+		qpnp_chg_charge_en(chip, 0);
+		qpnp_chg_force_run_on_batt(chip, 1);
+		charging_software_stoped = true;
+		printk("monitor work stop chargeing.\n");
+	}else if(temp > 0 && temp < 500  && (true == charging_software_stoped)){
+	    /*temperatrue is normal restore charging*/
+		qpnp_chg_charge_en(chip, 1);
+		qpnp_chg_force_run_on_batt(chip, 0);
+		charging_software_stoped = false;
+		printk("monitor work enable chargeing.\n");
+	}
+	
+	if (chip->bat_is_cool ^ bat_cool || chip->bat_is_warm ^ bat_warm) {
+		chip->bat_is_cool = bat_cool;
+		chip->bat_is_warm = bat_warm;
+			
+	    if (chip->bat_is_cool || chip->bat_is_warm)
+		    chip->resuming_charging = false;
+
+	    /**
+	     * set appropriate voltages and currents.
+	     *
+	     * Note that when the battery is hot or cold, the charger
+	     * driver will not resume with SoC. Only vbatdet is used to
+	     * determine resume of charging.
+	     */
+
+	    printk("set current temp changed.\n");
+	    qpnp_chg_set_appropriate_vddmax(chip);
+	    qpnp_chg_set_appropriate_battery_current(chip);
+	    qpnp_chg_set_appropriate_vbatdet(chip);
+	}
+	
+	printk("charging_software_stoped:%d,temp:%d,bat_cool:%d,bat_warm:%d,bat_current:%d,batt_voltage:%d.\n",charging_software_stoped,temp,
+		chip->bat_is_cool,chip->bat_is_warm,current_now,batt_voltage);
+	if(chip->cool_bat_decidegc < temp && temp < chip->warm_bat_decidegc)
+		delay_ms = 60*1000;
+	else
+		delay_ms = 30*1000;
+
+	if(wake_lock_active(&chip->temp_mon_wake_lock) || true == charging_software_stoped)
+		schedule_delayed_work(&chip->temp_mon_work,msecs_to_jiffies(delay_ms));
+}
+
 #define CONSECUTIVE_COUNT	3
 #define VBATDET_MAX_ERR_MV	50
 static void
@@ -3166,9 +3310,11 @@ qpnp_chg_insertion_ocv_work(struct work_struct *work)
 	if (rc)
 		pr_err("failed to read bat_if sts %d\n", rc);
 
-	pr_debug("batfet sts = %02x, charge_en = %02x ocv = %d\n",
+	printk("batfet sts = %02x, charge_en = %02x ocv = %d\n",
 			bat_if_sts, charge_en, chip->insertion_ocv_uv);
-	qpnp_chg_charge_en(chip, !chip->charging_disabled);
+	/*qpnp_chg_charge_en(chip, !chip->charging_disabled);*/
+	qpnp_chg_force_run_on_batt(chip, 0);
+	qpnp_chg_charge_en(chip, 1);
 	pr_debug("psy changed batt_psy\n");
 	power_supply_changed(&chip->batt_psy);
 }
@@ -3197,6 +3343,8 @@ qpnp_chg_adc_notification(enum qpnp_tm_state state, void *ctx)
 
 	temp = get_prop_batt_temp(chip);
 
+	printk("wyh temp = %d state = %s\n", temp,
+			state == ADC_TM_WARM_STATE ? "warm" : "cool");
 	pr_debug("temp = %d state = %s\n", temp,
 			state == ADC_TM_WARM_STATE ? "warm" : "cool");
 
@@ -3256,6 +3404,7 @@ qpnp_chg_adc_notification(enum qpnp_tm_state state, void *ctx)
 		 * driver will not resume with SoC. Only vbatdet is used to
 		 * determine resume of charging.
 		 */
+		printk("set current temperature changed.\n");
 		qpnp_chg_set_appropriate_vddmax(chip);
 		qpnp_chg_set_appropriate_battery_current(chip);
 		qpnp_chg_set_appropriate_vbatdet(chip);
@@ -3791,7 +3940,7 @@ qpnp_chg_request_irqs(struct qpnp_chg_chip *chip)
 				return rc;
 			}
 
-			enable_irq_wake(chip->batt_pres.irq);
+			//enable_irq_wake(chip->batt_pres.irq);
 
 			chip->batt_temp_ok.irq = spmi_get_irq_byname(spmi,
 						spmi_resource, "bat-temp-ok");
@@ -4419,7 +4568,7 @@ qpnp_charger_probe(struct spmi_device *spmi)
 		pr_err("kzalloc() failed.\n");
 		return -ENOMEM;
 	}
-
+	tmp_chip = chip;
 	chip->prev_usb_max_ma = -EINVAL;
 	chip->dev = &(spmi->dev);
 	chip->spmi = spmi;
@@ -4662,6 +4811,9 @@ qpnp_charger_probe(struct spmi_device *spmi)
 			qpnp_bat_if_adc_disable_work);
 	}
 
+	wake_lock_init(&chip->temp_mon_wake_lock,
+		WAKE_LOCK_SUSPEND, "qpnp-chg-temp-wake-lock");
+	INIT_DELAYED_WORK(&chip->temp_mon_work, qpnp_temp_mon_work);
 	INIT_DELAYED_WORK(&chip->eoc_work, qpnp_eoc_work);
 	INIT_DELAYED_WORK(&chip->arb_stop_work, qpnp_arb_stop_work);
 	INIT_DELAYED_WORK(&chip->usbin_health_check,
@@ -4704,7 +4856,7 @@ qpnp_charger_probe(struct spmi_device *spmi)
 	}
 
 	if ((chip->cool_bat_decidegc || chip->warm_bat_decidegc)
-							&& chip->bat_if_base) {
+							&& chip->bat_if_base && 0) {
 		chip->adc_param.low_temp = chip->cool_bat_decidegc;
 		chip->adc_param.high_temp = chip->warm_bat_decidegc;
 		chip->adc_param.timer_interval = ADC_MEAS2_INTERVAL_1S;
