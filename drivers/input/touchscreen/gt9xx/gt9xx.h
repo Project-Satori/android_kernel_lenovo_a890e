@@ -4,7 +4,6 @@
  *
  * Linux Foundation chooses to take subject only to the GPLv2 license
  * terms, and distributes only under these terms.
- *
  * 2010 - 2013 Goodix Technology.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -29,6 +28,9 @@
 #include <linux/input.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
+#include <linux/proc_fs.h>
+#include <linux/string.h>
+#include <asm/uaccess.h>
 #include <linux/delay.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -36,7 +38,6 @@
 #include <linux/regulator/consumer.h>
 #include <linux/firmware.h>
 #include <linux/debugfs.h>
-#include <linux/mutex.h>
 
 #if defined(CONFIG_FB)
 #include <linux/notifier.h>
@@ -46,16 +47,14 @@
 #define GOODIX_SUSPEND_LEVEL 1
 #endif
 
-#define GOODIX_MAX_CFG_GROUP	6
-#define GTP_FW_NAME_MAXSIZE	50
-
 struct goodix_ts_platform_data {
 	int irq_gpio;
 	u32 irq_gpio_flags;
 	int reset_gpio;
 	u32 reset_gpio_flags;
-	const char *product_id;
-	const char *fw_name;
+	int ldo_en_gpio;
+	u32 ldo_en_gpio_flags;
+	u32 family_id;
 	u32 x_max;
 	u32 y_max;
 	u32 x_min;
@@ -66,9 +65,8 @@ struct goodix_ts_platform_data {
 	u32 panel_maxy;
 	bool no_force_update;
 	bool i2c_pull_up;
-	bool enable_power_off;
-	size_t config_data_len[GOODIX_MAX_CFG_GROUP];
-	u8 *config_data[GOODIX_MAX_CFG_GROUP];
+	int gtp_cfg_len;
+	u8 *config_data;
 };
 struct goodix_ts_data {
 	spinlock_t irq_lock;
@@ -78,7 +76,6 @@ struct goodix_ts_data {
 	struct hrtimer timer;
 	struct workqueue_struct *goodix_wq;
 	struct work_struct	work;
-	char fw_name[GTP_FW_NAME_MAXSIZE];
 	s32 irq_is_disabled;
 	s32 use_irq;
 	u16 abs_x_max;
@@ -95,9 +92,6 @@ struct goodix_ts_data {
 	u8  fixed_cfg;
 	u8  esd_running;
 	u8  fw_error;
-	bool power_on;
-	struct mutex lock;
-	struct regulator *avdd;
 	struct regulator *vdd;
 	struct regulator *vcc_i2c;
 #if defined(CONFIG_FB)
@@ -111,10 +105,12 @@ extern u16 show_len;
 extern u16 total_len;
 
 /***************************PART1:ON/OFF define*******************************/
-#define GTP_CUSTOM_CFG			0
+#define GTP_CUSTOM_CFG			1
 #define GTP_CHANGE_X2Y			0
 #define GTP_DRIVER_SEND_CFG		1
-#define GTP_HAVE_TOUCH_KEY		1
+#define GTP_HAVE_TOUCH_KEY		0
+#define GTP_POWER_CTRL_SLEEP	1
+#define GTP_ICS_SLOT_REPORT	0
 
 /* auto updated by .bin file as default */
 #define GTP_AUTO_UPDATE			0
@@ -122,16 +118,15 @@ extern u16 total_len;
  * function together with GTP_AUTO_UPDATE */
 #define GTP_HEADER_FW_UPDATE	0
 
-#define GTP_CREATE_WR_NODE		0
-#define GTP_ESD_PROTECT			0
+#define GTP_CREATE_WR_NODE		1
+#define GTP_ESD_PROTECT			1
 #define GTP_WITH_PEN			0
 
-/* This cannot work when enable-power-off is on */
 #define GTP_SLIDE_WAKEUP		0
 /* double-click wakeup, function together with GTP_SLIDE_WAKEUP */
 #define GTP_DBL_CLK_WAKEUP		0
 
-#define GTP_DEBUG_ON			0
+#define GTP_DEBUG_ON			1
 #define GTP_DEBUG_ARRAY_ON		0
 #define GTP_DEBUG_FUNC_ON		0
 
@@ -146,6 +141,45 @@ extern u16 total_len;
  *	VDDIO		NC/300K		4
  *	NC			NC/300K		5
 */
+/* Define your own default or for Sensor_ID == 0 config here */
+/* The predefined one is just a sample config,
+ * which is not suitable for your tp in most cases. */
+#define CTP_CFG_GROUP1 {\
+	}
+
+/* Define your config for Sensor_ID == 1 here, if needed */
+#define CTP_CFG_GROUP2 {\
+0x42,0x1C,0x02,0xC0,0x03,0x05,0x74,0x10,0x01,0x0E,0x38,0x08,0x50,0x3C,0x03,0x05,0x00,0x00,0x00,0x00,0x12,0x22,0x04,0x16,0x17,0x19,0x14,0x8C,0x2C,0x0E,\
+0x62,0x64,0xF4,0x0A,0x00,0x00,0x00,0x02,0x02,0x1D,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x50,0xA0,0x94,0xC5,0x02,0x08,0x00,0x00,0x04,\
+0x9C,0x55,0x00,0x8E,0x62,0x00,0x82,0x71,0x00,0x7A,0x82,0x00,0x75,0x95,0x00,0x75,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,\
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x1E,0x28,0x00,0x00,0x00,0x02,0x04,0x06,0x08,0x0A,0x0C,0x0E,0x10,\
+0x12,0x14,0x16,0x18,0x1A,0x1C,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x28,0x26,0x24,0x22,0x21,0x20,0x1F,0x1E,\
+0x1D,0x1C,0x18,0x16,0x14,0x13,0x12,0x10,0x0F,0x0C,0x0A,0x08,0x06,0x04,0x02,0x00,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,\
+0x00,0x00,0x00,0x00,0x7D,0x01\
+	}
+
+/* Define your config for Sensor_ID == 2 here, if needed */
+#define CTP_CFG_GROUP3 {\
+0x41,0x1C,0x02,0xC0,0x03,0x05,0x04,0x24,0x01,0x08,0x1E,0x0F,0x5F,0x32,0x03,0x00,0x00,0x00,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x00,0x00,0x8C,0x2C,0x0E,\
+0x75,0x73,0x78,0x04,0x00,0x00,0x00,0x03,0x32,0x11,0x05,0x14,0x14,0x03,0x1E,0x00,0x00,0x00,0x00,0x00,0x02,0x50,0xBE,0x94,0xE0,0x02,0x00,0x00,0x00,0x04,\
+0x9E,0x57,0x00,0x86,0x68,0x00,0x73,0x7B,0x00,0x63,0x93,0x00,0x56,0xAE,0x00,0x56,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x14,0x00,0x00,0x00,\
+0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x19,0x5A,0x6E,0x3C,0x00,0x00,0x00,0x02,0x04,0x06,0x08,0x0A,0x0C,0x0E,0x10,\
+0x12,0x14,0x16,0x18,0x1A,0x1C,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x28,0x26,0x24,0x22,0x1C,0x1D,0x1E,0x1F,\
+0x20,0x21,0x16,0x18,0x14,0x13,0x12,0x10,0x0F,0x0C,0x0A,0x08,0x06,0x04,0x02,0x00,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,\
+0x00,0x00,0x00,0x00,0x81,0x01\
+	}
+
+/* Define your config for Sensor_ID == 3 here, if needed */
+#define CTP_CFG_GROUP4 {\
+	}
+
+/* Define your config for Sensor_ID == 4 here, if needed */
+#define CTP_CFG_GROUP5 {\
+	}
+
+/* Define your config for Sensor_ID == 5 here, if needed */
+#define CTP_CFG_GROUP6 {\
+	}
 
 #define GTP_IRQ_TAB		{\
 				IRQ_TYPE_EDGE_RISING,\
@@ -158,8 +192,8 @@ extern u16 total_len;
 #define GTP_IRQ_TAB_RISING	0
 #define GTP_IRQ_TAB_FALLING	1
 #if GTP_CUSTOM_CFG
-#define GTP_MAX_HEIGHT		800
-#define GTP_MAX_WIDTH		480
+#define GTP_MAX_HEIGHT		960
+#define GTP_MAX_WIDTH		540
 #define GTP_INT_TRIGGER		GTP_IRQ_TAB_RISING
 #else
 #define GTP_MAX_HEIGHT		4096
@@ -167,40 +201,48 @@ extern u16 total_len;
 #define GTP_INT_TRIGGER		GTP_IRQ_TAB_FALLING
 #endif
 
-#define GTP_PRODUCT_ID_MAXSIZE	5
-#define GTP_PRODUCT_ID_BUFFER_MAXSIZE	6
-#define GTP_FW_VERSION_BUFFER_MAXSIZE	4
-#define GTP_MAX_TOUCH		5
-#define GTP_ESD_CHECK_CIRCLE	2000      /* jiffy: ms */
+#define GTP_MAX_TOUCH         5
+#define GTP_ESD_CHECK_CIRCLE  2000     /* jiffy: ms */
 
 /***************************PART3:OTHER define*********************************/
-#define GTP_DRIVER_VERSION	"V1.8.1<2013/09/01>"
-#define GTP_I2C_NAME		"Goodix-TS"
-#define GTP_POLL_TIME		10     /* jiffy: ms*/
-#define GTP_ADDR_LENGTH		2
+#define GTP_DRIVER_VERSION		"V1.8<2013/06/08>"
+#define GTP_I2C_NAME			"Goodix-TS"
+#define GTP_POLL_TIME			10     /* jiffy: ms*/
+#define GTP_ADDR_LENGTH			2
 #define GTP_CONFIG_MIN_LENGTH	186
 #define GTP_CONFIG_MAX_LENGTH	240
-#define FAIL			0
-#define SUCCESS			1
-#define SWITCH_OFF		0
-#define SWITCH_ON		1
+#define FAIL					0
+#define SUCCESS					1
+#define SWITCH_OFF				0
+#define SWITCH_ON				1
 
 /* Registers define */
-#define GTP_READ_COOR_ADDR	0x814E
-#define GTP_REG_SLEEP		0x8040
-#define GTP_REG_SENSOR_ID	0x814A
-#define GTP_REG_CONFIG_DATA	0x8047
-#define GTP_REG_FW_VERSION	0x8144
-#define GTP_REG_PRODUCT_ID	0x8140
+#define GTP_READ_COOR_ADDR		0x814E
+#define GTP_REG_SLEEP			0x8040
+#define GTP_REG_SENSOR_ID		0x814A
+#define GTP_REG_CONFIG_DATA		0x8047
+#define GTP_REG_VERSION			0x8140
 
-#define RESOLUTION_LOC		3
-#define TRIGGER_LOC		8
+#define RESOLUTION_LOC			3
+#define TRIGGER_LOC				8
 
+#define GTP_RST_PORT    0
+#define GTP_INT_PORT    1
+#define GTP_GPIO_AS_INPUT(pin)    gpio_direction_input(pin)
+		 										 
+                
+#define GTP_GPIO_AS_INT(pin)            do{\
+                                            GTP_GPIO_AS_INPUT(pin);\
+                                        }while(0)
+#define GTP_GPIO_GET_VALUE(pin)         gpio_get_value(pin)
+#define GTP_GPIO_OUTPUT(pin,level)      gpio_direction_output(pin,level)
 #define CFG_GROUP_LEN(p_cfg_grp) (sizeof(p_cfg_grp) / sizeof(p_cfg_grp[0]))
 /* Log define */
+#define GTP_INFO(fmt,arg...)           printk("<<-GTP-INFO->> "fmt"\n",##arg)
+#define GTP_ERROR(fmt,arg...)          printk("<<-GTP-ERROR->> "fmt"\n",##arg)
 #define GTP_DEBUG(fmt, arg...)	do {\
 		if (GTP_DEBUG_ON) {\
-			pr_debug("<<-GTP-DEBUG->> [%d]"fmt"\n",\
+			printk("<<-GTP-DEBUG->> [%d]"fmt"\n",\
 				__LINE__, ##arg); } \
 		} while (0)
 
