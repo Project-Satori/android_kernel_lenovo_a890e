@@ -26,7 +26,7 @@ static int dsi_off(struct mdss_panel_data *pdata)
 {
 	int rc = 0;
 
-	pr_debug("turn off dsi controller\n");
+	pr_info("mdss %s+:\n", __func__);
 	if (dsi_intf.off)
 		rc = dsi_intf.off(pdata);
 
@@ -34,14 +34,14 @@ static int dsi_off(struct mdss_panel_data *pdata)
 		pr_err("mdss_dsi_off DSI failed %d\n", rc);
 		return rc;
 	}
+	pr_info("mdss %s-: End\n", __func__);
 	return rc;
 }
 
 static int dsi_on(struct mdss_panel_data *pdata)
 {
 	int rc = 0;
-
-	pr_debug("dsi_on DSI controller on\n");
+	pr_info("mdss %s+:\n", __func__);
 	if (dsi_intf.on)
 		rc = dsi_intf.on(pdata);
 
@@ -49,6 +49,7 @@ static int dsi_on(struct mdss_panel_data *pdata)
 		pr_err("mdss_dsi_on DSI failed %d\n", rc);
 		return rc;
 	}
+	pr_info("mdss %s-: End\n", __func__);
 	return rc;
 }
 
@@ -64,18 +65,21 @@ static int dsi_panel_handler(struct mdss_panel_data *pdata, int enable)
 				panel_data);
 
 	if (enable) {
+		pr_info("mdss %s+: PANEL_ON\n", __func__);
 		dsi_ctrl_gpio_request(ctrl_pdata);
 		mdss_dsi_panel_reset(pdata, 1);
 		rc = ctrl_pdata->on(pdata);
 		if (rc)
 			pr_err("dsi_panel_handler panel on failed %d\n", rc);
 	} else {
+		pr_info("mdss %s+: PANEL_OFF\n", __func__);
 		if (dsi_intf.op_mode_config)
 			dsi_intf.op_mode_config(DSI_CMD_MODE, pdata);
 		rc = ctrl_pdata->off(pdata);
 		mdss_dsi_panel_reset(pdata, 0);
 		dsi_ctrl_gpio_free(ctrl_pdata);
 	}
+	pr_info("mdss %s-: End\n", __func__);
 	return rc;
 }
 
@@ -116,7 +120,7 @@ static int dsi_event_handler(struct mdss_panel_data *pdata,
 		pr_err("%s: Invalid input data\n", __func__);
 		return -ENODEV;
 	}
-
+	pr_info("mdss %s+:event=%d ##############\n", __func__, event);
 	switch (event) {
 	case MDSS_EVENT_UNBLANK:
 		rc = dsi_on(pdata);
@@ -140,12 +144,14 @@ static int dsi_event_handler(struct mdss_panel_data *pdata,
 		pr_debug("%s: unhandled event=%d\n", __func__, event);
 		break;
 	}
+	pr_info("mdss %s-:event=%d, rc=%d ========\n", __func__, event, rc);
 	return rc;
 }
 
 static int dsi_parse_gpio(struct platform_device *pdev,
 				struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 {
+	int rc = 0;
 	struct device_node *np = pdev->dev.of_node;
 
 	ctrl_pdata->disp_en_gpio = of_get_named_gpio(np,
@@ -170,6 +176,17 @@ static int dsi_parse_gpio(struct platform_device *pdev,
 		pr_err("%s:%d, reset gpio not specified\n",
 						__func__, __LINE__);
 
+	ctrl_pdata->bklt_gpio= of_get_named_gpio(np, "qcom,platform-backlight-gpio", 0);
+	if(!gpio_is_valid(ctrl_pdata->bklt_gpio)){
+		pr_err("%s:%d, backlight gpio not specified\n",__func__, __LINE__);
+
+	}else{
+		rc = gpio_request(ctrl_pdata->bklt_gpio, "disp_bkl_n");
+		if(rc){
+			pr_err("requesting backlight gpio failed, rc =%d",rc);
+			gpio_free(ctrl_pdata->bklt_gpio);
+		}
+	}
 	ctrl_pdata->mode_gpio = -1;
 	if (ctrl_pdata->panel_data.panel_info.mode_gpio_state !=
 						MODE_GPIO_NOT_VALID) {
@@ -179,6 +196,7 @@ static int dsi_parse_gpio(struct platform_device *pdev,
 			pr_info("%s:%d, reset gpio not specified\n",
 							__func__, __LINE__);
 	}
+	pr_info("mdss %s-: disp_en_gpio=%d te_gpio=%d, rst_gpio=%d bklt_gpio=%d mode_gpio=%d========\n", __func__, ctrl_pdata->disp_en_gpio, ctrl_pdata->disp_te_gpio, ctrl_pdata->rst_gpio, ctrl_pdata->bklt_gpio, ctrl_pdata->mode_gpio);
 	return 0;
 }
 

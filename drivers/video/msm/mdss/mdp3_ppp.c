@@ -34,7 +34,7 @@
 #define MDP_RELEASE_BW_TIMEOUT 50
 #define MDP_BLIT_CLK_RATE	200000000
 #define MDP_PPP_MAX_BPP 4
-#define MDP_PPP_DYNAMIC_FACTOR 3
+#define MDP_PPP_DYNAMIC_FACTOR 6
 #define MDP_PPP_MAX_READ_WRITE 3
 #define ENABLE_SOLID_FILL	0x2
 #define DISABLE_SOLID_FILL	0x0
@@ -371,6 +371,8 @@ int mdp3_ppp_turnon(struct msm_fb_data_type *mfd, int on_off)
 			MDP_PPP_MAX_READ_WRITE;
 		ib = (ab * 3) / 2;
 	}
+	//ab = 2000000000UL;
+	//ib = 3000000000UL;
 	mdp3_clk_set_rate(MDP3_CLK_CORE, rate, MDP3_CLIENT_PPP);
 	rc = mdp3_clk_enable(on_off, 0);
 	if (rc < 0) {

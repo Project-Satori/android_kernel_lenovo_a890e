@@ -62,7 +62,7 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
-	pr_debug("%s: enable=%d\n", __func__, enable);
+	pr_info("%s: enable=%d\n", __func__, enable);
 
 	if (enable) {
 		ret = msm_dss_enable_vreg(
@@ -89,6 +89,7 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 				__func__, ret);
 		}
 	}
+	pr_info("%s:-\n", __func__);
 error:
 	return ret;
 }
@@ -307,7 +308,7 @@ static int mdss_dsi_off(struct mdss_panel_data *pdata)
 				panel_data);
 
 	panel_info = &ctrl_pdata->panel_data.panel_info;
-	pr_debug("%s+: ctrl=%p ndx=%d\n", __func__,
+	pr_info("%s+: ctrl=%p ndx=%d\n", __func__,
 				ctrl_pdata, ctrl_pdata->ndx);
 
 	if (pdata->panel_info.type == MIPI_CMD_PANEL)
@@ -342,7 +343,7 @@ static int mdss_dsi_off(struct mdss_panel_data *pdata)
 	    && (panel_info->new_fps != panel_info->mipi.frame_rate))
 		panel_info->mipi.frame_rate = panel_info->new_fps;
 
-	pr_debug("%s-:\n", __func__);
+	pr_info("%s-:\n", __func__);
 
 	return ret;
 }
@@ -372,7 +373,7 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
 
-	pr_debug("%s+: ctrl=%p ndx=%d\n",
+	pr_info("%s+: ctrl=%p ndx=%d\n",
 				__func__, ctrl_pdata, ctrl_pdata->ndx);
 
 	pinfo = &pdata->panel_info;
@@ -497,7 +498,7 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 	if (pdata->panel_info.type == MIPI_CMD_PANEL)
 		mdss_dsi_clk_ctrl(ctrl_pdata, 0);
 
-	pr_debug("%s-:\n", __func__);
+	pr_info("%s-:\n", __func__);
 	return 0;
 }
 
@@ -507,7 +508,7 @@ static int mdss_dsi_unblank(struct mdss_panel_data *pdata)
 	struct mipi_panel_info *mipi;
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
 
-	pr_debug("%s+:\n", __func__);
+	pr_info("%s+:\n", __func__);
 
 	if (pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
@@ -535,7 +536,7 @@ static int mdss_dsi_unblank(struct mdss_panel_data *pdata)
 		}
 	}
 
-	pr_debug("%s-:\n", __func__);
+	pr_info("%s-:\n", __func__);
 
 	return ret;
 }
@@ -546,7 +547,7 @@ static int mdss_dsi_blank(struct mdss_panel_data *pdata)
 	struct mipi_panel_info *mipi;
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
 
-	pr_debug("%s+:\n", __func__);
+	pr_info("%s+:\n", __func__);
 
 	if (pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
@@ -574,7 +575,7 @@ static int mdss_dsi_blank(struct mdss_panel_data *pdata)
 		}
 		ctrl_pdata->ctrl_state &= ~CTRL_STATE_PANEL_INIT;
 	}
-	pr_debug("%s-:End\n", __func__);
+	pr_info("%s-:End\n", __func__);
 	return ret;
 }
 
@@ -726,7 +727,7 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 	}
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
-	pr_debug("%s+:event=%d\n", __func__, event);
+	pr_info("%s+:event=%d\n", __func__, event);
 
 	switch (event) {
 	case MDSS_EVENT_UNBLANK:
@@ -789,7 +790,7 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		pr_debug("%s: unhandled event=%d\n", __func__, event);
 		break;
 	}
-	pr_debug("%s-:event=%d, rc=%d\n", __func__, event, rc);
+	pr_info("%s-:event=%d, rc=%d\n", __func__, event, rc);
 	return rc;
 }
 
@@ -975,7 +976,6 @@ static int __devinit mdss_dsi_ctrl_probe(struct platform_device *pdev)
 	}
 
 	cmd_cfg_cont_splash = mdss_panel_get_boot_cfg() ? true : false;
-
 	rc = mdss_dsi_panel_init(dsi_pan_node, ctrl_pdata, cmd_cfg_cont_splash);
 	if (rc) {
 		pr_err("%s: dsi panel init failed\n", __func__);
@@ -988,7 +988,7 @@ static int __devinit mdss_dsi_ctrl_probe(struct platform_device *pdev)
 		goto error_pan_node;
 	}
 
-	pr_debug("%s: Dsi Ctrl->%d initialized\n", __func__, index);
+	pr_info("%s: Dsi Ctrl->%d initialized\n", __func__, index);
 	return 0;
 
 error_pan_node:
@@ -1332,7 +1332,7 @@ int dsi_panel_device_register(struct device_node *pan_node,
 
 	ctrl_pdata->pclk_rate = mipi->dsi_pclk_rate;
 	ctrl_pdata->byte_clk_rate = pinfo->clk_rate / 8;
-	pr_debug("%s: pclk=%d, bclk=%d\n", __func__,
+	pr_info("%s: pclk=%d, bclk=%d\n", __func__,
 			ctrl_pdata->pclk_rate, ctrl_pdata->byte_clk_rate);
 
 	ctrl_pdata->ctrl_state = CTRL_STATE_UNKNOWN;
@@ -1372,7 +1372,7 @@ int dsi_panel_device_register(struct device_node *pan_node,
 		ctrl_pdata->ndx = 1;
 	}
 
-	pr_debug("%s: Panel data initialized\n", __func__);
+	pr_info("%s: Panel data initialized\n", __func__);
 	return 0;
 }
 

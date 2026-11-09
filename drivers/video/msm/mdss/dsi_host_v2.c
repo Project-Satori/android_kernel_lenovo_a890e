@@ -47,6 +47,8 @@ struct dsi_host_v2_private {
 	void (*debug_enable_clk)(int on);
 };
 
+char panel_name[10];
+
 static struct dsi_host_v2_private *dsi_host_private;
 static int msm_dsi_clk_ctrl(struct mdss_panel_data *pdata, int enable);
 
@@ -906,10 +908,16 @@ void msm_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 
 	msm_dsi_clk_ctrl(&ctrl->panel_data, 1);
 
+	if(0==(req->flags & CMD_REQ_LP_MODE))
+		dsi_set_tx_power_mode(0);
+
 	if (req->flags & CMD_REQ_RX)
 		msm_dsi_cmdlist_rx(ctrl, req);
 	else
 		msm_dsi_cmdlist_tx(ctrl, req);
+
+	if(0==(req->flags & CMD_REQ_LP_MODE))
+		dsi_set_tx_power_mode(1);
 
 	msm_dsi_clk_ctrl(&ctrl->panel_data, 0);
 
@@ -1212,7 +1220,7 @@ static int dsi_get_panel_cfg(char *panel_cfg)
 		return 0;
 	}
 
-	pr_debug("%s:%d: cfg:[%s]\n", __func__, __LINE__,
+	pr_info("%s:%d: cfg:[%s]\n", __func__, __LINE__,
 		 pan_cfg->arg_cfg);
 	rc = strlcpy(panel_cfg, pan_cfg->arg_cfg,
 				MDSS_MAX_PANEL_LEN);
@@ -1267,7 +1275,7 @@ static struct device_node *dsi_find_panel_of_node(
 		 * ':' to get to the panel name
 		 */
 		panel_name = panel_cfg + 2;
-		pr_debug("%s:%d:%s:%s\n", __func__, __LINE__,
+		pr_info("%s:%d:%s:%s\n", __func__, __LINE__,
 			 panel_cfg, panel_name);
 
 		mdss_node = of_parse_phandle(pdev->dev.of_node,
@@ -1338,18 +1346,25 @@ void msm_dsi_ctrl_init(struct mdss_dsi_ctrl_pdata *ctrl)
 	ctrl->cmdlist_commit = msm_dsi_cmdlist_commit;
 	ctrl->panel_mode = ctrl->panel_data.panel_info.mipi.mode;
 }
+static int dsi_get_panel_ic_type(char *panel_config, char *ic_type)
+{
+	strncpy(ic_type, (panel_config + 16),7);
+	ic_type[7] = '\0';
+	return 0;
+}
 
 static int __devinit msm_dsi_probe(struct platform_device *pdev)
 {
 	struct dsi_interface intf;
 	char panel_cfg[MDSS_MAX_PANEL_LEN];
+	char ic_type[10];
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
 	int rc = 0;
 	struct device_node *dsi_pan_node = NULL;
 	bool cmd_cfg_cont_splash = false;
 	struct resource *mdss_dsi_mres;
 
-	pr_debug("%s\n", __func__);
+	pr_info("%s\n", __func__);
 
 	rc = msm_dsi_init();
 	if (rc)
@@ -1421,6 +1436,14 @@ static int __devinit msm_dsi_probe(struct platform_device *pdev)
 		/* dsi panel cfg not present */
 		pr_warn("%s:%d:dsi specific cfg not present\n",
 							 __func__, __LINE__);
+
+	/*Getting and setting LCD panel type*/
+	rc = dsi_get_panel_ic_type(panel_cfg, ic_type);
+	if(strncmp(ic_type, "hx8389b", 7) == 0)
+		strcpy(panel_name,"Yassy");
+	else
+		strcpy(panel_name,"BOE");
+	printk("[LCD]:%s: panel name: %s\n",__func__,panel_name);
 
 	/* find panel device node */
 	dsi_pan_node = dsi_find_panel_of_node(pdev, panel_cfg);

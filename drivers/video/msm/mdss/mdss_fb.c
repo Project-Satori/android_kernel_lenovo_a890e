@@ -62,6 +62,7 @@
 #define MAX_FBI_LIST 32
 static struct fb_info *fbi_list[MAX_FBI_LIST];
 static int fbi_list_index;
+extern char panel_name[];
 
 static u32 mdss_fb_pseudo_palette[16] = {
 	0x00000000, 0xffffffff, 0xffffffff, 0xffffffff,
@@ -263,14 +264,22 @@ static ssize_t mdss_mdp_show_blank_event(struct device *dev,
 	return ret;
 }
 
+static ssize_t mdss_dsi_show_panel_name(struct device *dev, struct device_attribute *attr, char *buf)
+{
+		int ret;
+		ret = sprintf(buf, "%s\n", panel_name);
+		return ret;
+}
 static DEVICE_ATTR(msm_fb_type, S_IRUGO, mdss_fb_get_type, NULL);
 static DEVICE_ATTR(msm_fb_split, S_IRUGO, mdss_fb_get_split, NULL);
 static DEVICE_ATTR(show_blank_event, S_IRUGO, mdss_mdp_show_blank_event, NULL);
+static DEVICE_ATTR(lcd_name, S_IRUGO, mdss_dsi_show_panel_name, NULL);
 
 static struct attribute *mdss_fb_attrs[] = {
 	&dev_attr_msm_fb_type.attr,
 	&dev_attr_msm_fb_split.attr,
 	&dev_attr_show_blank_event.attr,
+	&dev_attr_lcd_name.attr,
 	NULL,
 };
 

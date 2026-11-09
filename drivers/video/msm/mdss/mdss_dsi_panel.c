@@ -76,11 +76,11 @@ static void mdss_dsi_panel_bklt_pwm(struct mdss_dsi_ctrl_pdata *ctrl, int level)
 	duty = level * ctrl->pwm_period;
 	duty /= ctrl->bklt_max;
 
-	pr_debug("%s: bklt_ctrl=%d pwm_period=%d pwm_gpio=%d pwm_lpg_chan=%d\n",
+	pr_info("%s: bklt_ctrl=%d pwm_period=%d pwm_gpio=%d pwm_lpg_chan=%d\n",
 			__func__, ctrl->bklt_ctrl, ctrl->pwm_period,
 				ctrl->pwm_pmic_gpio, ctrl->pwm_lpg_chan);
 
-	pr_debug("%s: ndx=%d level=%d duty=%d\n", __func__,
+	pr_info("%s: ndx=%d level=%d duty=%d\n", __func__,
 					ctrl->ndx, level, duty);
 
 	if (ctrl->pwm_enabled) {
@@ -137,6 +137,10 @@ static void mdss_dsi_panel_cmds_send(struct mdss_dsi_ctrl_pdata *ctrl,
 	cmdreq.cmds = pcmds->cmds;
 	cmdreq.cmds_cnt = pcmds->cmd_cnt;
 	cmdreq.flags = CMD_REQ_COMMIT;
+
+	if(pcmds->link_state == DSI_LP_MODE)
+		cmdreq.flags |= CMD_REQ_LP_MODE;
+
 	cmdreq.rlen = 0;
 	cmdreq.cb = NULL;
 
@@ -154,7 +158,6 @@ static void mdss_dsi_panel_bklt_dcs(struct mdss_dsi_ctrl_pdata *ctrl, int level)
 	struct dcs_cmd_req cmdreq;
 
 	pr_debug("%s: level=%d\n", __func__, level);
-
 	led_pwm1[1] = (unsigned char)level;
 
 	memset(&cmdreq, 0, sizeof(cmdreq));
@@ -163,7 +166,6 @@ static void mdss_dsi_panel_bklt_dcs(struct mdss_dsi_ctrl_pdata *ctrl, int level)
 	cmdreq.flags = CMD_REQ_COMMIT | CMD_CLK_CTRL;
 	cmdreq.rlen = 0;
 	cmdreq.cb = NULL;
-
 	mdss_dsi_cmdlist_put(ctrl, &cmdreq);
 }
 
@@ -182,7 +184,7 @@ void mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 				panel_data);
 
 	if (!gpio_is_valid(ctrl_pdata->disp_en_gpio)) {
-		pr_debug("%s:%d, reset line not configured\n",
+		pr_warn("%s:%d, reset line not configured\n",
 			   __func__, __LINE__);
 	}
 
@@ -192,7 +194,7 @@ void mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 		return;
 	}
 
-	pr_debug("%s: enable = %d\n", __func__, enable);
+	pr_info("%s: enable = %d\n", __func__, enable);
 	pinfo = &(ctrl_pdata->panel_data.panel_info);
 
 	if (enable) {
@@ -206,6 +208,15 @@ void mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 				usleep(pdata->panel_info.rst_seq[i] * 1000);
 		}
 
+		if(gpio_is_valid(ctrl_pdata->bklt_gpio)){
+			for(i = 0; i < 6; i++){
+				gpio_direction_output(ctrl_pdata->bklt_gpio, 0);
+				ndelay(300);
+				gpio_direction_output(ctrl_pdata->bklt_gpio, 1);
+				ndelay(300);
+				}
+			}
+
 		if (gpio_is_valid(ctrl_pdata->mode_gpio)) {
 			if (pinfo->mode_gpio_state == MODE_GPIO_HIGH)
 				gpio_set_value((ctrl_pdata->mode_gpio), 1);
@@ -213,16 +224,18 @@ void mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
 				gpio_set_value((ctrl_pdata->mode_gpio), 0);
 		}
 		if (ctrl_pdata->ctrl_state & CTRL_STATE_PANEL_INIT) {
-			pr_debug("%s: Panel Not properly turned OFF\n",
+			pr_info("%s: Panel Not properly turned OFF\n",
 						__func__);
 			ctrl_pdata->ctrl_state &= ~CTRL_STATE_PANEL_INIT;
-			pr_debug("%s: Reset panel done\n", __func__);
+			pr_info("%s: Reset panel done\n", __func__);
 		}
 	} else {
 		gpio_set_value((ctrl_pdata->rst_gpio), 0);
+		gpio_set_value((ctrl_pdata->bklt_gpio), 0);
 		if (gpio_is_valid(ctrl_pdata->disp_en_gpio))
 			gpio_set_value((ctrl_pdata->disp_en_gpio), 0);
 	}
+	pr_info("%s- end\n", __func__);
 }
 
 static char caset[] = {0x2a, 0x00, 0x00, 0x03, 0x00};	/* DTYPE_DCS_LWRITE */
@@ -292,7 +305,8 @@ static void mdss_dsi_panel_bl_ctrl(struct mdss_panel_data *pdata,
 
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
-
+	
+	printk("%s brightness:%d\n",__func__,bl_level);
 	/*
 	 * Some backlight controllers specify a minimum duty cycle
 	 * for the backlight brightness. If the brightness is less
@@ -305,6 +319,7 @@ static void mdss_dsi_panel_bl_ctrl(struct mdss_panel_data *pdata,
 	switch (ctrl_pdata->bklt_ctrl) {
 	case BL_WLED:
 		led_trigger_event(bl_led_trigger, bl_level);
+		mdss_dsi_panel_bklt_dcs(ctrl_pdata, bl_level);
 		break;
 	case BL_PWM:
 		mdss_dsi_panel_bklt_pwm(ctrl_pdata, bl_level);
@@ -333,12 +348,12 @@ static int mdss_dsi_panel_on(struct mdss_panel_data *pdata)
 				panel_data);
 	mipi  = &pdata->panel_info.mipi;
 
-	pr_debug("%s: ctrl=%p ndx=%d\n", __func__, ctrl, ctrl->ndx);
+	pr_info("%s: ctrl=%p ndx=%d, on_cmds_cnt=%d\n", __func__, ctrl, ctrl->ndx, ctrl->on_cmds.cmd_cnt);
 
 	if (ctrl->on_cmds.cmd_cnt)
 		mdss_dsi_panel_cmds_send(ctrl, &ctrl->on_cmds);
 
-	pr_debug("%s:-\n", __func__);
+	pr_info("%s:-\n", __func__);
 	return 0;
 }
 
@@ -355,14 +370,14 @@ static int mdss_dsi_panel_off(struct mdss_panel_data *pdata)
 	ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
 
-	pr_debug("%s: ctrl=%p ndx=%d\n", __func__, ctrl, ctrl->ndx);
+	pr_info("%s: ctrl=%p ndx=%d off_cmds_cnt=%d\n", __func__, ctrl, ctrl->ndx, ctrl->off_cmds.cmd_cnt);
 
 	mipi  = &pdata->panel_info.mipi;
 
 	if (ctrl->off_cmds.cmd_cnt)
 		mdss_dsi_panel_cmds_send(ctrl, &ctrl->off_cmds);
 
-	pr_debug("%s:-\n", __func__);
+	pr_info("%s:-\n", __func__);
 	return 0;
 }
 
@@ -799,12 +814,9 @@ static int mdss_panel_parse_dt(struct device_node *np,
 		"qcom,mdss-dsi-h-sync-pulse", &tmp);
 	pinfo->mipi.pulse_mode_hsa_he = (!rc ? tmp : false);
 
-	pinfo->mipi.hfp_power_stop = of_property_read_bool(np,
-		"qcom,mdss-dsi-hfp-power-mode");
-	pinfo->mipi.hsa_power_stop = of_property_read_bool(np,
-		"qcom,mdss-dsi-hsa-power-mode");
-	pinfo->mipi.hbp_power_stop = of_property_read_bool(np,
-		"qcom,mdss-dsi-hbp-power-mode");
+	pinfo->mipi.hfp_power_stop = of_property_read_bool(np,"qcom,mdss-dsi-hfp-power-mode");
+	pinfo->mipi.hsa_power_stop = of_property_read_bool(np,"qcom,mdss-dsi-hsa-power-mode");
+	pinfo->mipi.hbp_power_stop = of_property_read_bool(np,"qcom,mdss-dsi-hbp-power-mode");
 	pinfo->mipi.bllp_power_stop = of_property_read_bool(np,
 		"qcom,mdss-dsi-bllp-power-mode");
 	pinfo->mipi.eof_bllp_power_stop = of_property_read_bool(
@@ -933,7 +945,7 @@ int mdss_dsi_panel_init(struct device_node *node,
 		return -ENODEV;
 	}
 
-	pr_debug("%s:%d\n", __func__, __LINE__);
+	pr_info("%s:%d\n", __func__, __LINE__);
 	panel_name = of_get_property(node, "qcom,mdss-dsi-panel-name", NULL);
 	if (!panel_name)
 		pr_info("%s:%d, Panel name not specified\n",
