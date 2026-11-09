@@ -692,6 +692,7 @@ static int qpnp_mpp_set(struct qpnp_led_data *led)
 	int rc, val;
 	int duty_us;
 
+	printk("[LCD]:%s:brightness :%d, pwm=%d\n",__func__,led->cdev.brightness, led->mpp_cfg->pwm_cfg->pwm_period_us);
 	if (led->cdev.brightness) {
 		if (led->cdev.brightness < led->mpp_cfg->min_brightness) {
 			dev_warn(&led->spmi_dev->dev,
