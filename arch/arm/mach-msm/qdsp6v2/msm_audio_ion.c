@@ -482,7 +482,7 @@ static int msm_audio_ion_probe(struct platform_device *pdev)
 	if (smmu_enabled) {
 		msm_audio_ion_data.group = iommu_group_find("lpass_audio");
 		if (!msm_audio_ion_data.group) {
-			pr_debug("Failed to find group lpass_audio deferred\n");
+			pr_err("Failed to find group lpass_audio deferred\n");
 			goto fail_group;
 		}
 		msm_audio_ion_data.domain =

@@ -166,6 +166,22 @@ static struct gpiomux_setting gpio_int_sus_cfg = {
 	.dir = GPIOMUX_IN,
 };
 
+/* define gpio used as LCD_ID input */
+
+static struct gpiomux_setting lcd_id_act_cfg = {
+	.func = GPIOMUX_FUNC_GPIO,
+	.drv = GPIOMUX_DRV_2MA,
+	.pull = GPIOMUX_PULL_UP,
+	.dir = GPIOMUX_IN,
+};
+
+static struct gpiomux_setting lcd_id_sus_cfg = {
+	.func = GPIOMUX_FUNC_GPIO,
+	.drv = GPIOMUX_DRV_2MA,
+	.pull = GPIOMUX_PULL_NONE,
+	.dir = GPIOMUX_IN,
+};
+
 static struct msm_gpiomux_config msm_gpio_int_configs[] __initdata = {
 	{
 		.gpio = 84,
@@ -196,6 +212,16 @@ static struct msm_gpiomux_config msm_lcd_configs[] __initdata = {
 		.settings = {
 			[GPIOMUX_ACTIVE]    = &lcd_te_act_config,
 			[GPIOMUX_SUSPENDED] = &lcd_te_sus_config,
+		},
+	},
+};
+
+static struct msm_gpiomux_config msm_lcdid_configs[] __initdata = {
+	{
+		.gpio = 76,
+		.settings = {
+			[GPIOMUX_ACTIVE]    = &lcd_id_act_cfg,
+			[GPIOMUX_SUSPENDED] = &lcd_id_sus_cfg,
 		},
 	},
 };
@@ -653,6 +679,8 @@ void __init msm8610_init_gpiomux(void)
 			ARRAY_SIZE(wcnss_5wire_interface));
 	msm_gpiomux_install_nowrite(msm_lcd_configs,
 				ARRAY_SIZE(msm_lcd_configs));
+	msm_gpiomux_install(msm_lcdid_configs,
+				ARRAY_SIZE(msm_lcdid_configs));
 	msm_gpiomux_install(msm_keypad_configs,
 				ARRAY_SIZE(msm_keypad_configs));
 	msm_gpiomux_install(sd_card_det, ARRAY_SIZE(sd_card_det));

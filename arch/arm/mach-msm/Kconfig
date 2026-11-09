@@ -476,6 +476,16 @@ config ARCH_MSM8610
 	select MSM_RPM_STATS_LOG
 	select ENABLE_VMALLOC_SAVINGS
 
+choice
+	prompt "Hardware Board Type"
+	default HW_AIRBUSE
+
+config HW_APACHE
+	bool "Apache hardware"
+config HW_AIRBUSE
+	bool "Airbus-E hardware"
+endchoice
+
 config ARCH_MSM8226
 	bool "MSM8226"
 	select ARM_GIC

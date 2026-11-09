@@ -53,6 +53,9 @@
 #include "spm.h"
 #include "pm.h"
 #include "modem_notifier.h"
+/* Tony Sun, 2013.9.24, For WIFI/BT read MAC from NV, START */
+#include "lephone_nv.h"
+/* Tony Sun, 2013.9.24, For WIFI/BT read MAC from NV, END */
 
 static struct memtype_reserve msm8610_reserve_table[] __initdata = {
 	[MEMTYPE_SMI] = {
@@ -129,6 +132,9 @@ void __init msm8610_init(void)
 	msm8610_init_gpiomux();
 	board_dt_populate(adata);
 	msm8610_add_drivers();
+    /* Tony Sun, 2013.9.24, For WIFI/BT read MAC from NV, START */
+    lephone_nv_init();
+    /* Tony Sun, 2013.9.24, For WIFI/BT read MAC from NV, END */
 }
 
 static const char *msm8610_dt_match[] __initconst = {

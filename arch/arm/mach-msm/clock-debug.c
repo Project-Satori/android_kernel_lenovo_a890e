@@ -552,3 +552,62 @@ void clock_debug_print_enabled(void)
 
 	clock_debug_print_enabled_clocks(NULL);
 }
+
+/* (for K6) yangjq, 20130516, For PM debug, START */
+/* (for msm8610) wangzheng4, 20131113, merged*/
+
+static int clock_dump_clock(char* buf, int *has_one, struct clk *c)
+{
+	char *start = "";
+	char* p = buf;
+
+	*has_one = 0;
+	if (!c || !c->prepare_count)
+		return 0;
+
+	p += sprintf(p, "\t");
+	do {
+		if (c->vdd_class)
+			p += sprintf(p, "%s%s:%u:%u [%ld, %lu]", start, c->dbg_name,
+				c->prepare_count, c->count, c->rate,
+				c->vdd_class->cur_level);
+		else
+			p += sprintf(p, "%s%s:%u:%u [%ld]", start, c->dbg_name,
+				c->prepare_count, c->count, c->rate);
+		start = " -> ";
+	} while ((c = clk_get_parent(c)));
+
+	p += sprintf(p, "\n");
+
+	*has_one = 1;
+	return p - buf;
+}
+
+int clk_dump_info(char* buf)
+{
+	struct clk_table *table;
+	unsigned long flags;
+	int i, cnt = 0;
+	int has_one;
+	char* p = buf;
+
+	p += sprintf(p, "Enabled clocks:\n");
+	spin_lock_irqsave(&clk_list_lock, flags);
+	list_for_each_entry(table, &clk_list, node) {
+		for (i = 0; i < table->num_clocks; i++) {
+			p += clock_dump_clock(p, &has_one, table->clocks[i].clk);
+			cnt += has_one;
+		}
+	}
+	spin_unlock_irqrestore(&clk_list_lock, flags);
+
+	if (cnt)
+		p += sprintf(p, "Enabled clock count: %d\n", cnt);
+	else
+		p += sprintf(p, "No clocks enabled.\n");
+
+	return p - buf;
+}
+/* (for K6) yangjq, 20130516, For PM debug, END */
+/* (for msm8610) wangzheng4, 20131113, merged */
+

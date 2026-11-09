@@ -1061,6 +1061,8 @@ static int suspend_power_collapsed;
 
 static int msm_pm_enter(suspend_state_t state)
 {
+    //yangjq, 20130715, Use reserved share memory to communicate with RPM
+	extern void smem_set_reserved(int index, int data);
 	bool allow[MSM_PM_SLEEP_MODE_NR];
 	int i;
 	struct msm_pm_time_params time_param;
@@ -1085,6 +1087,8 @@ static int msm_pm_enter(suspend_state_t state)
 		allow[i] = mode->suspend_supported && mode->suspend_enabled;
 	}
 
+    //yangjq, 20130715, Inform RPM apps is power collapsed
+	smem_set_reserved(2, 1);
 	if (allow[MSM_PM_SLEEP_MODE_POWER_COLLAPSE]) {
 		void *rs_limits = NULL;
 		int ret = -ENODEV;
@@ -1137,6 +1141,8 @@ static int msm_pm_enter(suspend_state_t state)
 			pr_info("%s: swfi\n", __func__);
 		msm_pm_swfi();
 	}
+    //yangjq, 20130715, Inform RPM apps is power restored
+	smem_set_reserved(2, 0);
 
 enter_exit:
 	if (MSM_PM_DEBUG_SUSPEND & msm_pm_debug_mask)
