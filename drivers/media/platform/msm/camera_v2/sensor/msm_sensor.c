@@ -20,6 +20,7 @@
 #include <mach/rpm-regulator-smd.h>
 #include <linux/regulator/consumer.h>
 
+#define CONFIG_MSMB_CAMERA_DEBUG
 #undef CDBG
 #ifdef CONFIG_MSMB_CAMERA_DEBUG
 #define CDBG(fmt, args...) pr_err(fmt, ##args)
@@ -1160,6 +1161,7 @@ int32_t msm_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
 				0);
 			break;
 		case SENSOR_GPIO:
+{
 			if (power_setting->seq_val >= SENSOR_GPIO_MAX ||
 				!data->gpio_conf->gpio_num_info) {
 				pr_err("%s gpio index %d >= max %d\n", __func__,
@@ -1167,10 +1169,29 @@ int32_t msm_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
 					SENSOR_GPIO_MAX);
 				continue;
 			}
+            if(!strcmp(s_ctrl->sensordata->sensor_name, "sp0a28")&&(power_setting->seq_val == SENSOR_GPIO_STANDBY))
+			{
+				pr_err("%s sensor is sp0a28 \n", __func__);
+
+			    {
+    			    pr_err("%s GPIO is PWD \n", __func__);
+
+    			    gpio_set_value_cansleep(
+    				data->gpio_conf->gpio_num_info->gpio_num
+    				[power_setting->seq_val],
+    				GPIOF_OUT_INIT_HIGH);
+
+			    }
+
+			}
+			else
+			{
 			gpio_set_value_cansleep(
 				data->gpio_conf->gpio_num_info->gpio_num
 				[power_setting->seq_val], GPIOF_OUT_INIT_LOW);
+				}
 			break;
+			}
 		case SENSOR_VREG:
 			if (power_setting->seq_val >= CAM_VREG_MAX) {
 				pr_err("%s vreg index %d >= max %d\n", __func__,
@@ -1705,6 +1726,22 @@ int32_t msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl,
 			rc = -EFAULT;
 			break;
 		}
+		break;
+	}
+    case CFG_SENSOR_OTP_PROC: {
+
+	    if (s_ctrl->sensor_otp_proc == NULL) {
+				rc = -EFAULT;
+				break;
+			}
+
+		rc = s_ctrl->sensor_otp_proc(s_ctrl,cdata->sensor_otp_params_ptr);
+        if(rc<0)
+		    {
+    		    CDBG("CFG_SENSOR_OTP_PROC rc = %ld\n", rc);
+				rc = -EFAULT;
+            }
+
 		break;
 	}
 	default:

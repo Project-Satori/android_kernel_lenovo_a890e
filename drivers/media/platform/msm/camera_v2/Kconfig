@@ -182,6 +182,14 @@ config SP1628
 		1280 * 270. It does not support auto focus. It supports
 		few special effects like mono.
 
+config SP0A28
+	bool "Sensor SP0A28 (YUV 720P)"
+	depends on MSMB_CAMERA
+	---help---
+		SP0A28 is SuperPix YUV sensor. It supports 720P preview
+		and snapshot. The preview and snapshot resolution shall be
+		1280 * 270. It does not support auto focus. It supports
+		few special effects like mono.
 config GC0339
 	bool "Sensor GC0339 (BAYER .3M)"
 	depends on MSMB_CAMERA

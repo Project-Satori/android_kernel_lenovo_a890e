@@ -73,6 +73,7 @@ struct msm_sensor_ctrl_t {
 	uint16_t clk_info_size;
 	void *misc_regulator;
 	enum msm_sensor_state_t sensor_state;
+	int32_t (*sensor_otp_proc)(struct msm_sensor_ctrl_t *,struct msm_sensor_otp_params *);
 };
 
 int32_t msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl,

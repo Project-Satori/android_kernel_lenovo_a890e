@@ -15,7 +15,7 @@
 
 #include "msm_led_flash.h"
 
-/*#define CONFIG_MSMB_CAMERA_DEBUG*/
+#define CONFIG_MSMB_CAMERA_DEBUG
 #undef CDBG
 #ifdef CONFIG_MSMB_CAMERA_DEBUG
 #define CDBG(fmt, args...) pr_err(fmt, ##args)
@@ -87,7 +87,7 @@ int32_t msm_led_flash_create_v4lsubdev(struct platform_device *pdev, void *data)
 	fctrl->msm_sd.close_seq = MSM_SD_CLOSE_2ND_CATEGORY | 0x1;
 	msm_sd_register(&fctrl->msm_sd);
 
-	CDBG("probe success\n");
+	CDBG("led_flash probe success\n");
 	return 0;
 }
 
