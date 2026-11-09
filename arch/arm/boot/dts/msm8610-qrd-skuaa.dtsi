@@ -25,7 +25,8 @@
             "AMIC1", "MIC BIAS Internal1",
             "AMIC2", "MIC BIAS Internal2";
 
-        qcom,ext-spk-amp-gpio = <&msmgpio 92 0x0>;
+        qcom,ext-spk-amp-gpio-1 = <&msmgpio 92 0x0>;
+        qcom,ext-spk-amp-gpio-2 = <&msmgpio 91 0x0>;
     };
 
 	usb@f9a55000 {
@@ -39,7 +40,7 @@
 		qcom,rpull-up-kohm = <100>;
 		qcom,vref-batt-therm = <1800000>;
 
-		/include/ "batterydata-qrd-4v2-1300mah.dtsi"
+		/include/ "batterydata-qrd-4v35-2500mah.dtsi"
 	};
 
 	i2c@f9924000 { /* BLSP-1 QUP-2 */
