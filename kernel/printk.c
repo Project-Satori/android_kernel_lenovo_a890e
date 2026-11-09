@@ -889,6 +889,9 @@ static inline void printk_delay(void)
 	}
 }
 
+/* yangjq, 2012-11-13, For amss_printk, START */
+extern int smem_dmesg_get_message(char *message, int len);
+/* yangjq, 2012-11-13, For amss_printk, END */
 asmlinkage int vprintk(const char *fmt, va_list args)
 {
 	int printed_len = 0;
@@ -937,6 +940,13 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 	printed_len += vscnprintf(printk_buf + printed_len,
 				  sizeof(printk_buf) - printed_len, fmt, args);
 
+       /* yangjq, 2012-11-13, For amss_printk, START */
+#if 1
+       /* Emit the amss_printk output into the temporary buffer */
+       printed_len += smem_dmesg_get_message(printk_buf + printed_len,
+                                 sizeof(printk_buf) - printed_len);
+#endif /* 0 */
+       /* yangjq, 2012-11-13, For amss_printk, END */
 
 	p = printk_buf;
 

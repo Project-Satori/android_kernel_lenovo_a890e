@@ -136,6 +136,10 @@ void __attribute__ ((weak)) arch_suspend_enable_irqs(void)
  *
  * This function should be called after devices have been suspended.
  */
+/* (for K6) yangjq, 20130516, Add for sysfs tlmm_before_sleep */
+/* (for msm8610) wangzheng4, 20131113, merged */
+extern void tlmm_before_sleep_set_configs(void);
+extern void tlmm_before_sleep_save_configs(void);
 static int suspend_enter(suspend_state_t state, bool *wakeup)
 {
 	int error;
@@ -160,6 +164,13 @@ static int suspend_enter(suspend_state_t state, bool *wakeup)
 
 	if (suspend_test(TEST_PLATFORM))
 		goto Platform_wake;
+
+	/* (for K6) yangjq, 20130516, Add for sysfs tlmm_before_sleep. START */
+	/* (for msm8610) wangzheng4, 20131113, merged */
+	tlmm_before_sleep_set_configs();
+	tlmm_before_sleep_save_configs();
+	/* yangjq, 20130516, Add for sysfs tlmm_before_sleep. END */
+	/* (for msm8610) wangzheng4, 20131113, merged */
 
 	error = disable_nonboot_cpus();
 	if (error || suspend_test(TEST_CPUS))
