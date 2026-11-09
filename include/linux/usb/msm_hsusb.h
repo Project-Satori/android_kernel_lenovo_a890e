@@ -102,11 +102,11 @@ enum msm_usb_phy_type {
 	SNPS_28NM_INTEGRATED_PHY,
 };
 
-#define IDEV_CHG_MAX	1500
+#define IDEV_CHG_MAX	1000
 #define IDEV_CHG_MIN	500
 #define IUNIT		100
 
-#define IDEV_ACA_CHG_MAX	1500
+#define IDEV_ACA_CHG_MAX	1000
 #define IDEV_ACA_CHG_LIMIT	500
 
 /**
@@ -448,7 +448,10 @@ struct msm_otg {
 	struct hrtimer timer;
 	enum usb_vdd_type vdd_type;
 	struct power_supply usb_psy;
+	struct power_supply ac_psy;
 	unsigned int online;
+	unsigned int ac_online;
+	unsigned int vbus_state;
 	unsigned int host_mode;
 	unsigned int voltage_max;
 	unsigned int current_max;

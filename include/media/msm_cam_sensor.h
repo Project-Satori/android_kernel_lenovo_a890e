@@ -351,8 +351,19 @@ struct msm_sensor_init_params {
 	uint32_t            sensor_mount_angle;
 };
 
+struct msm_sensor_otp_params {
+     int customer_id;
+     int module_integrator_id;
+     int lens_id;
+     int rg_ratio;
+     int bg_ratio;
+     int user_data[2];
+     int light_rg;
+     int light_bg;
+};
 struct sensorb_cfg_data {
 	int cfgtype;
+    struct msm_sensor_otp_params  *sensor_otp_params_ptr;
 	union {
 		struct msm_sensor_info_t      sensor_info;
 		struct msm_sensor_init_params sensor_init_params;
@@ -434,6 +445,7 @@ enum msm_sensor_cfg_type_t {
 	CFG_SET_WHITE_BALANCE,
 	CFG_SET_AUTOFOCUS,
 	CFG_CANCEL_AUTOFOCUS,
+    CFG_SENSOR_OTP_PROC
 };
 
 enum msm_actuator_cfg_type_t {
